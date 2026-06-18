@@ -136,6 +136,8 @@ Exit criteria:
 
 Goal: make online play durable enough for real playtesting from here forward.
 
+Status: **Complete**
+
 This milestone moves earlier than originally planned because every milestone from v0.4.0 onward requires stable real-player sessions to validate. Fragile disconnect behavior makes playtesting across multiple milestones too painful to sustain.
 
 Scope:
@@ -159,6 +161,8 @@ Exit criteria:
 ## v0.5.0 - Simulation Identity
 
 Goal: give Prism its own visual and audio language before content and factions are layered on top.
+
+Status: **Complete**
 
 This milestone lands after the multiplayer foundation is stable because the visual system needs to accommodate faction colors and era theming without being rebuilt.
 
@@ -328,9 +332,9 @@ When priorities compete, use this order:
 - `0.2.x`: refine match quality
 - `0.3.0`: short-form ruleset — **complete**
 - `0.3.x`: tune the ruleset
-- `0.4.0`: multiplayer foundation
+- `0.4.0`: multiplayer foundation — **complete**
 - `0.4.x`: harden multiplayer
-- `0.5.0`: simulation identity
+- `0.5.0`: simulation identity — **complete**
 - `0.5.x`: polish simulation identity
 - `0.6.0`: factions
 - `0.6.x`: balance faction play
