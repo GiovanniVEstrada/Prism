@@ -748,15 +748,6 @@
   /* Adjacent enemy territories you can attack from the selected territory */
   .attackable {
     outline: 2px solid #ff7d4d;
-    background: #5c2e1e;
-  }
-
-  .owned-by-player1.attackable {
-    background: #5c2e1e;
-  }
-
-  .owned-by-player2.attackable {
-    background: #5c2e1e;
   }
 
   @media (max-width: 960px) {
