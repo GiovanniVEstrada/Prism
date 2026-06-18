@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { Server } from 'socket.io';
 import {
   attack,
@@ -18,6 +19,7 @@ import type { ClientEvent, GameState, PlayerState, RoomSnapshot } from '../src/l
 
 const PORT = Number(process.env.PRISM_SERVER_PORT ?? process.env.PORT ?? 3001);
 const RECONNECT_WINDOW_MS = 45_000;
+const PERSIST_PATH = './data/rooms.json';
 
 const roomStates = new Map<string, GameState>();
 const socketToRoom = new Map<string, string>();
@@ -29,6 +31,14 @@ type ReconnectEntry = {
 };
 const pendingReconnects = new Map<string, ReconnectEntry>(); // key: roomCode
 
+// Session tokens prevent a different socket from hijacking a disconnected player's slot.
+// Key: `${roomCode}:${playerId}`, value: UUID token.
+const playerTokens = new Map<string, string>();
+
+// Spectators observe a full room without participating in the match.
+// Key: roomCode, value: Set of spectator socketIds.
+const roomSpectators = new Map<string, Set<string>>();
+
 const httpServer = createServer((_, response) => {
   response.writeHead(200, { 'content-type': 'text/plain' });
   response.end('Prism socket server is live.\n');
@@ -39,6 +49,43 @@ const io = new Server(httpServer, {
     origin: '*'
   }
 });
+
+// ── Persistence ─────────────────────────────────────────────────────────────
+
+function persistRooms() {
+  try {
+    mkdirSync('./data', { recursive: true });
+    const payload = {
+      rooms: Object.fromEntries(roomStates),
+      tokens: Object.fromEntries(playerTokens)
+    };
+    writeFileSync(PERSIST_PATH, JSON.stringify(payload), 'utf8');
+  } catch {
+    // Non-fatal; in-memory state is still authoritative.
+  }
+}
+
+function loadPersistedRooms() {
+  try {
+    const raw = readFileSync(PERSIST_PATH, 'utf8');
+    const payload = JSON.parse(raw) as {
+      rooms: Record<string, GameState>;
+      tokens: Record<string, string>;
+    };
+    for (const [code, state] of Object.entries(payload.rooms)) {
+      if (state.phase !== 'finished') {
+        roomStates.set(code, state);
+      }
+    }
+    for (const [key, token] of Object.entries(payload.tokens)) {
+      playerTokens.set(key, token);
+    }
+  } catch {
+    // No persisted state; start fresh.
+  }
+}
+
+// ── Room helpers ─────────────────────────────────────────────────────────────
 
 function makeRoomCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -54,9 +101,28 @@ function makeRoomCode(): string {
   return code;
 }
 
+function generateToken(): string {
+  return crypto.randomUUID();
+}
+
+function spectatorCount(roomCode: string): number {
+  return roomSpectators.get(roomCode)?.size ?? 0;
+}
+
 function removeSocketFromRoom(socketId: string) {
   const roomCode = socketToRoom.get(socketId);
-  if (!roomCode) return;
+  if (!roomCode) {
+    // May be a spectator.
+    for (const [code, sockets] of roomSpectators) {
+      if (sockets.has(socketId)) {
+        sockets.delete(socketId);
+        if (sockets.size === 0) roomSpectators.delete(code);
+        emitSnapshot(code);
+        return;
+      }
+    }
+    return;
+  }
 
   socketToRoom.delete(socketId);
   const state = roomStates.get(roomCode);
@@ -65,6 +131,7 @@ function removeSocketFromRoom(socketId: string) {
   const remainingPlayers = state.players.filter((player) => player.socketId !== socketId);
   if (remainingPlayers.length === 0) {
     roomStates.delete(roomCode);
+    persistRooms();
     return;
   }
 
@@ -94,6 +161,7 @@ function removeSocketFromRoom(socketId: string) {
         winnerId: null
       };
       roomStates.set(roomCode, nextState);
+      persistRooms();
       emitSnapshot(roomCode);
     }, RECONNECT_WINDOW_MS);
 
@@ -121,6 +189,7 @@ function removeSocketFromRoom(socketId: string) {
   };
 
   roomStates.set(roomCode, nextState);
+  persistRooms();
   emitSnapshot(roomCode);
 }
 
@@ -135,15 +204,38 @@ function emitSnapshot(roomCode: string) {
   const state = roomStates.get(roomCode);
   if (!state) return;
 
+  const specCount = spectatorCount(roomCode);
+
   for (const player of state.players) {
+    const tokenKey = `${roomCode}:${player.id}`;
     const snapshot: RoomSnapshot = {
       state,
-      viewerSocketId: player.socketId
+      viewerSocketId: player.socketId,
+      viewerToken: playerTokens.get(tokenKey) ?? null,
+      isSpectator: false,
+      spectatorCount: specCount
     };
     io.to(player.socketId).emit('server:message', {
       type: 'room:update',
       payload: snapshot
     });
+  }
+
+  const spectators = roomSpectators.get(roomCode);
+  if (spectators) {
+    for (const socketId of spectators) {
+      const snapshot: RoomSnapshot = {
+        state,
+        viewerSocketId: socketId,
+        viewerToken: null,
+        isSpectator: true,
+        spectatorCount: specCount
+      };
+      io.to(socketId).emit('server:message', {
+        type: 'room:update',
+        payload: snapshot
+      });
+    }
   }
 }
 
@@ -156,6 +248,8 @@ function withRoom(socketId: string): GameState {
 
   return state;
 }
+
+// ── Action handler ────────────────────────────────────────────────────────────
 
 function applyAction(socketId: string, action: ClientEvent) {
   try {
@@ -171,6 +265,11 @@ function applyAction(socketId: string, action: ClientEvent) {
       roomStates.set(roomCode, state);
       socketToRoom.set(socketId, roomCode);
       io.sockets.sockets.get(socketId)?.join(roomCode);
+
+      const token = generateToken();
+      playerTokens.set(`${roomCode}:player1`, token);
+
+      persistRooms();
       emitSnapshot(roomCode);
       return;
     }
@@ -181,16 +280,21 @@ function applyAction(socketId: string, action: ClientEvent) {
       const state = roomStates.get(roomCode);
       if (!state) throw new Error('Room does not exist.');
 
-      // Reconnect path: restore the disconnected player's slot with the new socket.
+      // Reconnect path: token must match if provided, then restore the slot.
       const reconnect = pendingReconnects.get(roomCode);
       if (reconnect) {
+        const tokenKey = `${roomCode}:${reconnect.player.id}`;
+        const storedToken = playerTokens.get(tokenKey);
+
+        // If the room has a stored token, require it to match.
+        if (storedToken && action.token !== storedToken) {
+          throw new Error('Session token mismatch. Only the original player can reclaim this slot.');
+        }
+
         clearTimeout(reconnect.timer);
         pendingReconnects.delete(roomCode);
 
-        const restoredPlayer: PlayerState = {
-          ...reconnect.player,
-          socketId
-        };
+        const restoredPlayer: PlayerState = { ...reconnect.player, socketId };
         const nextState: GameState = {
           ...state,
           players: state.players.map((p) =>
@@ -200,6 +304,17 @@ function applyAction(socketId: string, action: ClientEvent) {
         roomStates.set(roomCode, nextState);
         socketToRoom.set(socketId, roomCode);
         io.sockets.sockets.get(socketId)?.join(roomCode);
+        persistRooms();
+        emitSnapshot(roomCode);
+        return;
+      }
+
+      // Room is full — add as spectator instead of rejecting.
+      if (state.players.length >= 2) {
+        io.sockets.sockets.get(socketId)?.join(roomCode);
+        const specs = roomSpectators.get(roomCode) ?? new Set();
+        specs.add(socketId);
+        roomSpectators.set(roomCode, specs);
         emitSnapshot(roomCode);
         return;
       }
@@ -213,8 +328,18 @@ function applyAction(socketId: string, action: ClientEvent) {
       roomStates.set(roomCode, nextState);
       socketToRoom.set(socketId, roomCode);
       io.sockets.sockets.get(socketId)?.join(roomCode);
+
+      const token = generateToken();
+      playerTokens.set(`${roomCode}:${player.id}`, token);
+
+      persistRooms();
       emitSnapshot(roomCode);
       return;
+    }
+
+    // Spectators cannot take game actions.
+    for (const specs of roomSpectators.values()) {
+      if (specs.has(socketId)) return;
     }
 
     const state = withRoom(socketId);
@@ -254,11 +379,16 @@ function applyAction(socketId: string, action: ClientEvent) {
     }
 
     roomStates.set(state.roomCode, nextState);
+    persistRooms();
     emitSnapshot(state.roomCode);
   } catch (error) {
     emitError(socketId, error instanceof Error ? error.message : 'Unknown server error.');
   }
 }
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+loadPersistedRooms();
 
 io.on('connection', (socket) => {
   socket.on('client:action', (action: ClientEvent) => {

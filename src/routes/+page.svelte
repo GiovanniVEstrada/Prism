@@ -13,6 +13,8 @@
   let errorMessage = '';
   let connected = false;
   let viewerSocketId: string | null = null;
+  let isSpectator = false;
+  let spectatorCount = 0;
   let state: GameState | null = null;
 
   $: me = state?.players.find((p) => p.socketId === viewerSocketId) ?? null;
@@ -85,10 +87,18 @@
         return;
       }
 
-      state = message.payload.state;
-      viewerSocketId = message.payload.viewerSocketId;
-      currentRoomCode = message.payload.state.roomCode;
+      const snap = message.payload;
+      state = snap.state;
+      viewerSocketId = snap.viewerSocketId;
+      isSpectator = snap.isSpectator;
+      spectatorCount = snap.spectatorCount;
+      currentRoomCode = snap.state.roomCode;
       errorMessage = '';
+
+      // Persist the session token so reconnects can reclaim the correct slot.
+      if (snap.viewerToken) {
+        localStorage.setItem(`prism-token-${currentRoomCode}`, snap.viewerToken);
+      }
 
       // Keep the URL in sync with the current room.
       const url = new URL(window.location.href);
@@ -111,7 +121,9 @@
   }
 
   function handleJoinRoom() {
-    emitAction({ type: 'join-room', roomCode, playerName: playerName || 'Player 2' });
+    const code = roomCode.trim().toUpperCase();
+    const token = localStorage.getItem(`prism-token-${code}`) ?? undefined;
+    emitAction({ type: 'join-room', roomCode: code, playerName: playerName || 'Player 2', token });
   }
 
   function copyInviteLink() {
@@ -121,7 +133,7 @@
   }
 
   function territoryAction(territoryId: TerritoryId) {
-    if (!state || !myPlayerId) return;
+    if (!state || !myPlayerId || isSpectator) return;
 
     if (state.phase === 'draft') {
       if (!isMyDraftTurn) return;
@@ -179,9 +191,18 @@
 
       {#if currentRoomCode}
         <div class="room-row">
-          <p class="room">Room {currentRoomCode}</p>
+          <p class="room">
+            Room {currentRoomCode}
+            {#if spectatorCount > 0}
+              <span class="spectator-badge">{spectatorCount} watching</span>
+            {/if}
+          </p>
           <button type="button" class="ghost small" on:click={copyInviteLink}>Copy invite link</button>
         </div>
+      {/if}
+
+      {#if isSpectator}
+        <p class="spectator-notice">Watching — this room is full</p>
       {/if}
 
       {#if errorMessage}
@@ -659,6 +680,27 @@
     font-size: 0.78rem;
     color: #98a7b8;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Spectator ───────────────────────────────────────────────────────── */
+
+  .spectator-notice {
+    font-size: 0.82rem;
+    color: #98a7b8;
+    border: 1px solid #2b333d;
+    border-radius: 6px;
+    padding: 6px 10px;
+  }
+
+  .spectator-badge {
+    font-size: 0.72rem;
+    color: #98a7b8;
+    background: #1b2128;
+    border: 1px solid #2b333d;
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
   }
 
   /* ── Event log ───────────────────────────────────────────────────────── */

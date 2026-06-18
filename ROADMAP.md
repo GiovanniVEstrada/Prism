@@ -77,6 +77,8 @@ Exit criteria:
 
 Goal: make the first loop stable, readable, and replayable without developer intervention.
 
+Status: **Complete**
+
 Scope:
 
 - Rematch and game reset flow without reloading the page
@@ -99,6 +101,8 @@ Exit criteria:
 ## v0.3.0 - Short-Form Ruleset
 
 Goal: define what makes Prism a distinct game, then implement it. This milestone requires settling game design before writing code.
+
+Status: **Complete**
 
 Design questions to answer before scope is finalized:
 
@@ -320,9 +324,9 @@ When priorities compete, use this order:
 
 - `0.1.0`: protocol spine — **complete**
 - `0.1.x`: stabilize the protocol spine
-- `0.2.0`: match quality
+- `0.2.0`: match quality — **complete**
 - `0.2.x`: refine match quality
-- `0.3.0`: short-form ruleset
+- `0.3.0`: short-form ruleset — **complete**
 - `0.3.x`: tune the ruleset
 - `0.4.0`: multiplayer foundation
 - `0.4.x`: harden multiplayer

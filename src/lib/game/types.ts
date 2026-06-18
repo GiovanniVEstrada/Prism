@@ -77,11 +77,14 @@ export interface GameState {
 export interface RoomSnapshot {
   state: GameState;
   viewerSocketId: string | null;
+  viewerToken: string | null;
+  isSpectator: boolean;
+  spectatorCount: number;
 }
 
 export type ClientEvent =
   | { type: 'create-room'; playerName: string }
-  | { type: 'join-room'; roomCode: string; playerName: string }
+  | { type: 'join-room'; roomCode: string; playerName: string; token?: string }
   | { type: 'claim-territory'; territoryId: TerritoryId }
   | { type: 'start-game'; roundCap: number }
   | { type: 'reset-game' }
