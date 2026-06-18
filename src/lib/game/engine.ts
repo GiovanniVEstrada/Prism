@@ -9,8 +9,7 @@ import type {
   TerritoryState
 } from './types';
 
-const INITIAL_DRAFT_UNITS = 3;
-const TURN_REINFORCEMENTS = 1;
+const DEFAULT_ROUND_CAP = 12;
 
 function createTerritories(): Record<TerritoryId, TerritoryState> {
   return STONE_AGE_TERRITORIES.reduce(
@@ -20,6 +19,27 @@ function createTerritories(): Record<TerritoryId, TerritoryState> {
     },
     {} as Record<TerritoryId, TerritoryState>
   );
+}
+
+// Units granted to a player at the start of their turn based on territory control.
+function reinforcementsFor(state: GameState, playerId: PlayerId): number {
+  const owned = Object.values(state.territories).filter((t) => t.ownerId === playerId).length;
+  return Math.max(2, Math.floor(owned / 3));
+}
+
+// Dominance score: territory count + unit bonus. Used when the round cap is reached.
+export function dominanceScore(state: GameState, playerId: PlayerId): number {
+  const owned = Object.values(state.territories).filter((t) => t.ownerId === playerId);
+  const units = owned.reduce((sum, t) => sum + t.units, 0);
+  return owned.length + Math.floor(units / 4);
+}
+
+function winnerByDominance(state: GameState): PlayerId | null {
+  const p1 = dominanceScore(state, 'player1');
+  const p2 = dominanceScore(state, 'player2');
+  if (p1 > p2) return 'player1';
+  if (p2 > p1) return 'player2';
+  return null; // draw
 }
 
 export function isDraftComplete(state: GameState): boolean {
@@ -43,7 +63,9 @@ export function createRoom(roomCode: string, host: PlayerState): GameState {
     reinforcementsRemaining: 0,
     lastAttack: null,
     selectedTerritoryId: null,
-    events: []
+    events: [],
+    round: 0,
+    roundCap: DEFAULT_ROUND_CAP
   };
 }
 
@@ -81,28 +103,23 @@ export function claimTerritory(state: GameState, actorId: PlayerId, territoryId:
 
   const nextTerritories = {
     ...state.territories,
-    [territoryId]: {
-      ...territory,
-      ownerId: actorId,
-      units: INITIAL_DRAFT_UNITS
-    }
+    [territoryId]: { ...territory, ownerId: actorId, units: 3 }
   };
 
-  const claimedCount = Object.values(nextTerritories).filter((entry) => entry.ownerId).length;
+  const claimedCount = Object.values(nextTerritories).filter((t) => t.ownerId).length;
   const allClaimed = claimedCount === STONE_AGE_TERRITORIES.length;
-  const nextDraftTurn = nextPlayerId(actorId);
   const event: GameEvent = { type: 'claim', playerId: actorId, territoryId };
 
   return {
     ...state,
     territories: nextTerritories,
-    draftTurn: allClaimed ? null : nextDraftTurn,
+    draftTurn: allClaimed ? null : nextPlayerId(actorId),
     selectedTerritoryId: null,
     events: [...state.events, event]
   };
 }
 
-export function startGame(state: GameState, actorSocketId: string): GameState {
+export function startGame(state: GameState, actorSocketId: string, roundCap: number = DEFAULT_ROUND_CAP): GameState {
   if (state.hostSocketId !== actorSocketId) {
     throw new Error('Only the host can start the game.');
   }
@@ -123,7 +140,9 @@ export function startGame(state: GameState, actorSocketId: string): GameState {
     ...state,
     phase: 'active',
     currentTurn: 'player1',
-    reinforcementsRemaining: TURN_REINFORCEMENTS,
+    reinforcementsRemaining: reinforcementsFor(state, 'player1'),
+    round: 1,
+    roundCap,
     lastAttack: null,
     events: [...state.events, { type: 'start' }]
   };
@@ -146,6 +165,7 @@ export function resetGame(state: GameState, actorSocketId: string): GameState {
     territories: createTerritories(),
     draftTurn: state.players[0].id,
     reinforcementsRemaining: 0,
+    round: 0,
     lastAttack: null,
     selectedTerritoryId: null,
     events: [{ type: 'reset' }]
@@ -162,10 +182,7 @@ export function selectTerritory(state: GameState, actorId: PlayerId, territoryId
     throw new Error('You can only select your own territory.');
   }
 
-  return {
-    ...state,
-    selectedTerritoryId: territoryId
-  };
+  return { ...state, selectedTerritoryId: territoryId };
 }
 
 export function reinforce(state: GameState, actorId: PlayerId, territoryId: TerritoryId): GameState {
@@ -188,10 +205,7 @@ export function reinforce(state: GameState, actorId: PlayerId, territoryId: Terr
     ...state,
     territories: {
       ...state.territories,
-      [territoryId]: {
-        ...territory,
-        units: territory.units + 1
-      }
+      [territoryId]: { ...territory, units: territory.units + 1 }
     },
     reinforcementsRemaining: state.reinforcementsRemaining - 1,
     selectedTerritoryId: territoryId,
@@ -217,8 +231,8 @@ function compareRolls(attackRolls: number[], defendRolls: number[]) {
 function winnerFromState(territories: Record<TerritoryId, TerritoryState>): PlayerId | null {
   const owners = new Set(
     Object.values(territories)
-      .map((territory) => territory.ownerId)
-      .filter((ownerId): ownerId is PlayerId => ownerId !== null)
+      .map((t) => t.ownerId)
+      .filter((id): id is PlayerId => id !== null)
   );
 
   return owners.size === 1 ? [...owners][0] : null;
@@ -264,22 +278,19 @@ export function attack(
   const nextDefenderUnits = defender.units - defendLosses;
   const conquered = nextDefenderUnits <= 0;
 
+  // On conquest, move the full attack dice count into the captured territory.
+  // When conquered, attackLosses is always 0 (winning all comparisons is required to
+  // reduce a defender to 0 in one roll), so nextAttackerUnits === attacker.units and
+  // attacker.units - attackDice >= 1 is guaranteed by the attackDice formula.
   const nextTerritories = {
     ...state.territories,
     [from]: {
       ...attacker,
-      units: conquered ? nextAttackerUnits - 1 : nextAttackerUnits
+      units: conquered ? nextAttackerUnits - attackDice : nextAttackerUnits
     },
     [to]: conquered
-      ? {
-          ...defender,
-          ownerId: actorId,
-          units: 1
-        }
-      : {
-          ...defender,
-          units: nextDefenderUnits
-        }
+      ? { ...defender, ownerId: actorId, units: attackDice }
+      : { ...defender, units: nextDefenderUnits }
   };
 
   const winnerId = winnerFromState(nextTerritories);
@@ -316,15 +327,34 @@ export function endTurn(state: GameState, actorId: PlayerId): GameState {
   }
 
   const nextTurn = nextPlayerId(actorId);
-  const event: GameEvent = { type: 'end-turn', playerId: actorId };
+  const nextRound = actorId === 'player2' ? state.round + 1 : state.round;
+  const endTurnEvent: GameEvent = { type: 'end-turn', playerId: actorId };
+
+  // Round cap: game ends after player2 completes the final round.
+  if (actorId === 'player2' && nextRound > state.roundCap) {
+    const winnerId = winnerByDominance(state);
+    const endEvent: GameEvent = winnerId ? { type: 'win', winnerId } : { type: 'draw' };
+    return {
+      ...state,
+      phase: 'finished',
+      currentTurn: null,
+      winnerId,
+      round: nextRound,
+      reinforcementsRemaining: 0,
+      lastAttack: null,
+      selectedTerritoryId: null,
+      events: [...state.events, endTurnEvent, endEvent]
+    };
+  }
 
   return {
     ...state,
     currentTurn: nextTurn,
-    reinforcementsRemaining: TURN_REINFORCEMENTS,
+    reinforcementsRemaining: reinforcementsFor(state, nextTurn),
+    round: nextRound,
     lastAttack: null,
     selectedTerritoryId: null,
-    events: [...state.events, event]
+    events: [...state.events, endTurnEvent]
   };
 }
 

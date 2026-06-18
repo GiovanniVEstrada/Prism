@@ -3,6 +3,7 @@ import {
   attack,
   claimTerritory,
   createRoom,
+  dominanceScore,
   endTurn,
   isDraftComplete,
   joinRoom,
@@ -125,7 +126,8 @@ describe('game engine', () => {
     state = endTurn(state, 'player1');
 
     expect(state.currentTurn).toBe('player2');
-    expect(state.reinforcementsRemaining).toBe(1);
+    // player2 owns 6 territories → max(2, floor(6/3)) = 2
+    expect(state.reinforcementsRemaining).toBe(2);
   });
 
   it('rejects non-adjacent attacks', () => {
@@ -167,6 +169,85 @@ describe('game engine', () => {
     expect(state.winnerId).toBeNull();
     expect(Object.values(state.territories).every((t) => t.ownerId === null)).toBe(true);
     expect(state.events.at(-1)?.type).toBe('reset');
+  });
+
+  it('grants reinforcements based on territory count', () => {
+    // player1 owns 6 territories at start → max(2, floor(6/3)) = 2
+    const state = createStartedGame();
+    expect(state.reinforcementsRemaining).toBe(2);
+
+    // Simulate player1 losing 3 territories to player2 (3 owned → max(2, floor(3/3)) = 1 → clamped to 2)
+    const weakState = {
+      ...state,
+      territories: {
+        ...state.territories,
+        'frost-peaks': { ...state.territories['frost-peaks'], ownerId: 'player2' as const },
+        'thunder-mesa': { ...state.territories['thunder-mesa'], ownerId: 'player2' as const },
+        'bone-ridge': { ...state.territories['bone-ridge'], ownerId: 'player2' as const }
+      }
+    };
+    const afterTurn = endTurn(weakState, 'player1');
+    // player2 now has 9 territories → max(2, floor(9/3)) = 3
+    expect(afterTurn.reinforcementsRemaining).toBe(3);
+  });
+
+  it('calculates dominance score as territories plus unit bonus', () => {
+    const state = createStartedGame();
+    // player1: 6 territories × 3 units = 18 units → 6 + floor(18/4) = 6 + 4 = 10
+    expect(dominanceScore(state, 'player1')).toBe(10);
+    expect(dominanceScore(state, 'player2')).toBe(10);
+  });
+
+  it('ends the match by dominance score when the round cap is reached', () => {
+    let state = createStartedGame();
+    // Give player1 more territory so they win by dominance.
+    state = {
+      ...state,
+      round: state.roundCap, // final round
+      currentTurn: 'player2', // it's player2's turn to end the round
+      territories: {
+        ...state.territories,
+        'wolf-den': { ...state.territories['wolf-den'], ownerId: 'player1' as const },
+        'ash-marsh': { ...state.territories['ash-marsh'], ownerId: 'player1' as const }
+      }
+    };
+
+    // player2 ends their turn — this completes the final round.
+    const finished = endTurn(state, 'player2');
+
+    expect(finished.phase).toBe('finished');
+    expect(finished.winnerId).toBe('player1');
+  });
+
+  it('records a draw when dominance scores are equal at the round cap', () => {
+    const state = createStartedGame();
+    const lastRound = { ...state, round: state.roundCap, currentTurn: 'player2' as const };
+
+    const finished = endTurn(lastRound, 'player2');
+
+    expect(finished.phase).toBe('finished');
+    expect(finished.winnerId).toBeNull();
+    expect(finished.events.at(-1)?.type).toBe('draw');
+  });
+
+  it('moves attackDice units into the conquered territory', () => {
+    let state = createStartedGame();
+    state = {
+      ...state,
+      territories: {
+        ...state.territories,
+        'frost-peaks': { ...state.territories['frost-peaks'], units: 4 },
+        'wolf-den': { ...state.territories['wolf-den'], units: 1 }
+      }
+    };
+
+    // 3 attack dice, 1 defend die → attacker wins → 3 units move to wolf-den
+    const rolls = [0.99, 0.99, 0.99, 0.0];
+    state = attack(state, 'player1', 'frost-peaks', 'wolf-den', () => rolls.shift() ?? 0.5);
+
+    expect(state.territories['wolf-den'].units).toBe(3);
+    // attacker keeps 4 - 3 = 1 unit
+    expect(state.territories['frost-peaks'].units).toBe(1);
   });
 
   it('appends events for draft, start, attack, turn end, and win', () => {

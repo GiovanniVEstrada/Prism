@@ -228,9 +228,12 @@ function applyAction(socketId: string, action: ClientEvent) {
         if (!roomReady(state)) throw new Error('Waiting for second player.');
         nextState = claimTerritory(state, playerId, action.territoryId);
         break;
-      case 'start-game':
-        nextState = startGame(state, socketId);
+      case 'start-game': {
+        const validCaps = [12, 16, 20];
+        const cap = validCaps.includes(action.roundCap) ? action.roundCap : 12;
+        nextState = startGame(state, socketId, cap);
         break;
+      }
       case 'reset-game':
         nextState = resetGame(state, socketId);
         break;

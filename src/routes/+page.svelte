@@ -2,8 +2,10 @@
   import { onMount } from 'svelte';
   import { connectSocket, emitAction } from '$lib/client/socket';
   import { STONE_AGE_MAP } from '$lib/game/map';
-  import { isDraftComplete } from '$lib/game/engine';
+  import { isDraftComplete, dominanceScore } from '$lib/game/engine';
   import type { GameEvent, GameState, PlayerId, TerritoryId } from '$lib/game/types';
+
+  let selectedRoundCap = 12;
 
   let playerName = '';
   let roomCode = '';
@@ -64,6 +66,8 @@
         return `${playerName_(event.playerId)} ended their turn`;
       case 'win':
         return `${playerName_(event.winnerId)} wins the match`;
+      case 'draw':
+        return 'Match ended in a draw';
       case 'reset':
         return 'New match started';
     }
@@ -203,18 +207,25 @@
           {/if}
         </div>
 
-        <p>Phase: <strong>{state.phase}</strong></p>
+        {#if state.phase === 'active' || state.phase === 'finished'}
+          <div class="round-row">
+            <span class="muted small">Round</span>
+            <span class="round-value">{Math.min(state.round, state.roundCap)} / {state.roundCap}</span>
+          </div>
+        {/if}
 
         {#if state.phase === 'draft'}
-          <p>Draft progress: <strong>{Object.values(state.territories).filter((t) => t.ownerId).length}/{STONE_AGE_MAP.length}</strong></p>
+          <p class="muted small">Draft: {Object.values(state.territories).filter((t) => t.ownerId).length}/{STONE_AGE_MAP.length} claimed</p>
         {/if}
 
         {#if state.phase === 'active'}
-          <p>Reinforcements: <strong>{state.reinforcementsRemaining}</strong></p>
+          <p class="muted small">Reinforcements this turn: <strong>{state.reinforcementsRemaining}</strong></p>
         {/if}
 
         <div class="players">
           {#each state.players as player}
+            {@const score = dominanceScore(state, player.id)}
+            {@const territories = Object.values(state.territories).filter((t) => t.ownerId === player.id).length}
             <div
               class="player-row"
               class:viewer={player.socketId === viewerSocketId}
@@ -222,17 +233,35 @@
             >
               <span class="player-name">{player.name}</span>
               <span class="muted player-id">{player.id}</span>
-              <span class="territory-count">
-                {Object.values(state.territories).filter((t) => t.ownerId === player.id).length} territories
+              <span class="player-stats">
+                {territories}t
+                {#if state.phase === 'active' || state.phase === 'finished'}
+                  · {score}pts
+                {/if}
               </span>
             </div>
           {/each}
         </div>
 
-        {#if canStart}
-          <button type="button" on:click={() => emitAction({ type: 'start-game' })}>Start war</button>
-        {:else if state.phase === 'draft' && viewerSocketId === state.hostSocketId && !isDraftComplete(state)}
-          <p class="muted">Claim all territories to start.</p>
+        {#if state.phase === 'draft' && viewerSocketId === state.hostSocketId}
+          <div class="round-cap-picker">
+            <span class="muted small">Match length</span>
+            <div class="round-cap-options">
+              {#each [12, 16, 20] as cap}
+                <label class="cap-option" class:cap-selected={selectedRoundCap === cap}>
+                  <input type="radio" bind:group={selectedRoundCap} value={cap} />
+                  {cap}r
+                </label>
+              {/each}
+            </div>
+          </div>
+          {#if canStart}
+            <button type="button" on:click={() => emitAction({ type: 'start-game', roundCap: selectedRoundCap })}>
+              Start war
+            </button>
+          {:else}
+            <p class="muted">Claim all territories to start.</p>
+          {/if}
         {/if}
 
         {#if isMyTurn}
@@ -250,8 +279,20 @@
 
         {#if state.phase === 'finished'}
           <div class="game-over">
-            <p class="game-over-label">Match over</p>
-            <p class="game-over-winner">{winnerName} wins</p>
+            {#if state.winnerId}
+              <p class="game-over-label">
+                {state.round > state.roundCap ? 'Round cap — dominance win' : 'Conquest'}
+              </p>
+              <p class="game-over-winner">{winnerName} wins</p>
+            {:else}
+              <p class="game-over-label">Round cap reached</p>
+              <p class="game-over-winner game-over-draw">Draw</p>
+              <p class="muted small">
+                {#each state.players as p}
+                  {p.name}: {dominanceScore(state, p.id)}pts&nbsp;
+                {/each}
+              </p>
+            {/if}
             {#if canReset}
               <button type="button" on:click={() => emitAction({ type: 'reset-game' })}>Play again</button>
             {:else}
@@ -504,8 +545,7 @@
     font-weight: 600;
   }
 
-  .player-id,
-  .territory-count {
+  .player-id {
     font-size: 0.78rem;
     color: #98a7b8;
   }
@@ -559,6 +599,66 @@
     font-size: 1.25rem;
     font-weight: 700;
     color: #d6f36a;
+  }
+
+  .game-over-draw {
+    color: #98a7b8;
+  }
+
+  /* ── Round counter ───────────────────────────────────────────────────── */
+
+  .round-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .round-value {
+    font-weight: 700;
+    font-size: 0.9rem;
+  }
+
+  /* ── Match length picker ─────────────────────────────────────────────── */
+
+  .round-cap-picker {
+    display: grid;
+    gap: 6px;
+  }
+
+  .round-cap-options {
+    display: flex;
+    gap: 6px;
+  }
+
+  .cap-option {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid #364150;
+    cursor: pointer;
+    font-size: 0.85rem;
+    background: #1b2128;
+    color: #98a7b8;
+  }
+
+  .cap-option input[type='radio'] {
+    display: none;
+  }
+
+  .cap-selected {
+    border-color: #d6f36a;
+    color: #d6f36a;
+    background: #1e2a15;
+  }
+
+  /* ── Player stats ────────────────────────────────────────────────────── */
+
+  .player-stats {
+    font-size: 0.78rem;
+    color: #98a7b8;
+    font-variant-numeric: tabular-nums;
   }
 
   /* ── Event log ───────────────────────────────────────────────────────── */

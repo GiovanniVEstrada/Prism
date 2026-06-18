@@ -54,6 +54,7 @@ export type GameEvent =
   | { type: 'attack'; attacker: PlayerId; from: TerritoryId; to: TerritoryId; conquered: boolean }
   | { type: 'end-turn'; playerId: PlayerId }
   | { type: 'win'; winnerId: PlayerId }
+  | { type: 'draw' }
   | { type: 'reset' };
 
 export interface GameState {
@@ -69,6 +70,8 @@ export interface GameState {
   lastAttack: AttackResult | null;
   selectedTerritoryId: TerritoryId | null;
   events: GameEvent[];
+  round: number;
+  roundCap: number;
 }
 
 export interface RoomSnapshot {
@@ -80,7 +83,7 @@ export type ClientEvent =
   | { type: 'create-room'; playerName: string }
   | { type: 'join-room'; roomCode: string; playerName: string }
   | { type: 'claim-territory'; territoryId: TerritoryId }
-  | { type: 'start-game' }
+  | { type: 'start-game'; roundCap: number }
   | { type: 'reset-game' }
   | { type: 'select-territory'; territoryId: TerritoryId }
   | { type: 'reinforce'; territoryId: TerritoryId }
