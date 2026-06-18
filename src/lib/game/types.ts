@@ -3,12 +3,18 @@ export type PlayerId = 'player1' | 'player2';
 export type Phase = 'lobby' | 'draft' | 'active' | 'finished';
 
 export type TerritoryId =
-  | 'cave-of-echoes'
-  | 'river-plain'
-  | 'obsidian-ridge'
-  | 'mammoth-steppe'
-  | 'ember-forest'
-  | 'sun-basin';
+  | 'frost-peaks'
+  | 'wolf-den'
+  | 'thunder-mesa'
+  | 'ochre-bluffs'
+  | 'bone-ridge'
+  | 'great-rift'
+  | 'red-gorge'
+  | 'ash-marsh'
+  | 'river-delta'
+  | 'ember-steppe'
+  | 'amber-plains'
+  | 'salt-flat';
 
 export interface TerritoryState {
   id: TerritoryId;
@@ -41,6 +47,15 @@ export interface AttackResult {
   winnerId: PlayerId | null;
 }
 
+export type GameEvent =
+  | { type: 'claim'; playerId: PlayerId; territoryId: TerritoryId }
+  | { type: 'start' }
+  | { type: 'reinforce'; playerId: PlayerId; territoryId: TerritoryId }
+  | { type: 'attack'; attacker: PlayerId; from: TerritoryId; to: TerritoryId; conquered: boolean }
+  | { type: 'end-turn'; playerId: PlayerId }
+  | { type: 'win'; winnerId: PlayerId }
+  | { type: 'reset' };
+
 export interface GameState {
   roomCode: string;
   hostSocketId: string;
@@ -53,6 +68,7 @@ export interface GameState {
   reinforcementsRemaining: number;
   lastAttack: AttackResult | null;
   selectedTerritoryId: TerritoryId | null;
+  events: GameEvent[];
 }
 
 export interface RoomSnapshot {
@@ -65,6 +81,7 @@ export type ClientEvent =
   | { type: 'join-room'; roomCode: string; playerName: string }
   | { type: 'claim-territory'; territoryId: TerritoryId }
   | { type: 'start-game' }
+  | { type: 'reset-game' }
   | { type: 'select-territory'; territoryId: TerritoryId }
   | { type: 'reinforce'; territoryId: TerritoryId }
   | { type: 'attack'; from: TerritoryId; to: TerritoryId }

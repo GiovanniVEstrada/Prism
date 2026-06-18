@@ -9,6 +9,7 @@ import {
   isDraftComplete,
   joinRoom,
   reinforce,
+  resetGame,
   roomReady,
   selectTerritory,
   startGame
@@ -16,8 +17,17 @@ import {
 import type { ClientEvent, GameState, PlayerState, RoomSnapshot } from '../src/lib/game/types';
 
 const PORT = Number(process.env.PRISM_SERVER_PORT ?? process.env.PORT ?? 3001);
+const RECONNECT_WINDOW_MS = 45_000;
+
 const roomStates = new Map<string, GameState>();
 const socketToRoom = new Map<string, string>();
+
+// Tracks players who disconnected mid-match so they can reclaim their slot.
+type ReconnectEntry = {
+  player: PlayerState;
+  timer: ReturnType<typeof setTimeout>;
+};
+const pendingReconnects = new Map<string, ReconnectEntry>(); // key: roomCode
 
 const httpServer = createServer((_, response) => {
   response.writeHead(200, { 'content-type': 'text/plain' });
@@ -46,15 +56,11 @@ function makeRoomCode(): string {
 
 function removeSocketFromRoom(socketId: string) {
   const roomCode = socketToRoom.get(socketId);
-  if (!roomCode) {
-    return;
-  }
+  if (!roomCode) return;
 
   socketToRoom.delete(socketId);
   const state = roomStates.get(roomCode);
-  if (!state) {
-    return;
-  }
+  if (!state) return;
 
   const remainingPlayers = state.players.filter((player) => player.socketId !== socketId);
   if (remainingPlayers.length === 0) {
@@ -62,6 +68,45 @@ function removeSocketFromRoom(socketId: string) {
     return;
   }
 
+  const disconnectedPlayer = state.players.find((p) => p.socketId === socketId);
+
+  // Hold the room open during an active or draft match so the player can reconnect.
+  if (disconnectedPlayer && (state.phase === 'active' || state.phase === 'draft')) {
+    const existing = pendingReconnects.get(roomCode);
+    if (existing) clearTimeout(existing.timer);
+
+    const timer = setTimeout(() => {
+      pendingReconnects.delete(roomCode);
+      const current = roomStates.get(roomCode);
+      if (!current) return;
+
+      // Time expired — reset the room to lobby with the remaining player as host.
+      const nextState: GameState = {
+        ...current,
+        hostSocketId: remainingPlayers[0].socketId,
+        players: remainingPlayers,
+        phase: 'lobby',
+        currentTurn: null,
+        draftTurn: null,
+        reinforcementsRemaining: 0,
+        selectedTerritoryId: null,
+        lastAttack: null,
+        winnerId: null
+      };
+      roomStates.set(roomCode, nextState);
+      emitSnapshot(roomCode);
+    }, RECONNECT_WINDOW_MS);
+
+    pendingReconnects.set(roomCode, { player: disconnectedPlayer, timer });
+
+    emitError(
+      remainingPlayers[0].socketId,
+      `${disconnectedPlayer.name} disconnected. Waiting ${RECONNECT_WINDOW_MS / 1000}s for them to rejoin...`
+    );
+    return;
+  }
+
+  // Outside an active match — reset immediately.
   const nextState: GameState = {
     ...state,
     hostSocketId: remainingPlayers[0].socketId,
@@ -88,9 +133,7 @@ function emitError(socketId: string, message: string) {
 
 function emitSnapshot(roomCode: string) {
   const state = roomStates.get(roomCode);
-  if (!state) {
-    return;
-  }
+  if (!state) return;
 
   for (const player of state.players) {
     const snapshot: RoomSnapshot = {
@@ -106,14 +149,10 @@ function emitSnapshot(roomCode: string) {
 
 function withRoom(socketId: string): GameState {
   const roomCode = socketToRoom.get(socketId);
-  if (!roomCode) {
-    throw new Error('You are not in a room.');
-  }
+  if (!roomCode) throw new Error('You are not in a room.');
 
   const state = roomStates.get(roomCode);
-  if (!state) {
-    throw new Error('Room was not found.');
-  }
+  if (!state) throw new Error('Room was not found.');
 
   return state;
 }
@@ -140,12 +179,33 @@ function applyAction(socketId: string, action: ClientEvent) {
       removeSocketFromRoom(socketId);
       const roomCode = action.roomCode.trim().toUpperCase();
       const state = roomStates.get(roomCode);
-      if (!state) {
-        throw new Error('Room does not exist.');
+      if (!state) throw new Error('Room does not exist.');
+
+      // Reconnect path: restore the disconnected player's slot with the new socket.
+      const reconnect = pendingReconnects.get(roomCode);
+      if (reconnect) {
+        clearTimeout(reconnect.timer);
+        pendingReconnects.delete(roomCode);
+
+        const restoredPlayer: PlayerState = {
+          ...reconnect.player,
+          socketId
+        };
+        const nextState: GameState = {
+          ...state,
+          players: state.players.map((p) =>
+            p.id === restoredPlayer.id ? restoredPlayer : p
+          )
+        };
+        roomStates.set(roomCode, nextState);
+        socketToRoom.set(socketId, roomCode);
+        io.sockets.sockets.get(socketId)?.join(roomCode);
+        emitSnapshot(roomCode);
+        return;
       }
 
       const player: PlayerState = {
-        id: state.players.some((existingPlayer) => existingPlayer.id === 'player1') ? 'player2' : 'player1',
+        id: state.players.some((p) => p.id === 'player1') ? 'player2' : 'player1',
         socketId,
         name: action.playerName.trim() || 'Player 2'
       };
@@ -159,21 +219,20 @@ function applyAction(socketId: string, action: ClientEvent) {
 
     const state = withRoom(socketId);
     const playerId = getPlayerIdBySocket(state, socketId);
-    if (!playerId) {
-      throw new Error('Player was not found in room.');
-    }
+    if (!playerId) throw new Error('Player was not found in room.');
 
     let nextState = state;
 
     switch (action.type) {
       case 'claim-territory':
-        if (!roomReady(state)) {
-          throw new Error('Waiting for second player.');
-        }
+        if (!roomReady(state)) throw new Error('Waiting for second player.');
         nextState = claimTerritory(state, playerId, action.territoryId);
         break;
       case 'start-game':
         nextState = startGame(state, socketId);
+        break;
+      case 'reset-game':
+        nextState = resetGame(state, socketId);
         break;
       case 'select-territory':
         nextState = selectTerritory(state, playerId, action.territoryId);

@@ -1,6 +1,7 @@
 import { STONE_AGE_MAP, STONE_AGE_TERRITORIES, isAdjacent } from './map';
 import type {
   AttackResult,
+  GameEvent,
   GameState,
   PlayerId,
   PlayerState,
@@ -41,7 +42,8 @@ export function createRoom(roomCode: string, host: PlayerState): GameState {
     draftTurn: null,
     reinforcementsRemaining: 0,
     lastAttack: null,
-    selectedTerritoryId: null
+    selectedTerritoryId: null,
+    events: []
   };
 }
 
@@ -89,12 +91,14 @@ export function claimTerritory(state: GameState, actorId: PlayerId, territoryId:
   const claimedCount = Object.values(nextTerritories).filter((entry) => entry.ownerId).length;
   const allClaimed = claimedCount === STONE_AGE_TERRITORIES.length;
   const nextDraftTurn = nextPlayerId(actorId);
+  const event: GameEvent = { type: 'claim', playerId: actorId, territoryId };
 
   return {
     ...state,
     territories: nextTerritories,
     draftTurn: allClaimed ? null : nextDraftTurn,
-    selectedTerritoryId: territoryId
+    selectedTerritoryId: null,
+    events: [...state.events, event]
   };
 }
 
@@ -120,7 +124,31 @@ export function startGame(state: GameState, actorSocketId: string): GameState {
     phase: 'active',
     currentTurn: 'player1',
     reinforcementsRemaining: TURN_REINFORCEMENTS,
-    lastAttack: null
+    lastAttack: null,
+    events: [...state.events, { type: 'start' }]
+  };
+}
+
+export function resetGame(state: GameState, actorSocketId: string): GameState {
+  if (state.hostSocketId !== actorSocketId) {
+    throw new Error('Only the host can reset the game.');
+  }
+
+  if (state.phase !== 'finished') {
+    throw new Error('Game must be finished before resetting.');
+  }
+
+  return {
+    ...state,
+    phase: 'draft',
+    currentTurn: null,
+    winnerId: null,
+    territories: createTerritories(),
+    draftTurn: state.players[0].id,
+    reinforcementsRemaining: 0,
+    lastAttack: null,
+    selectedTerritoryId: null,
+    events: [{ type: 'reset' }]
   };
 }
 
@@ -154,6 +182,8 @@ export function reinforce(state: GameState, actorId: PlayerId, territoryId: Terr
     throw new Error('You can only reinforce your own territory.');
   }
 
+  const event: GameEvent = { type: 'reinforce', playerId: actorId, territoryId };
+
   return {
     ...state,
     territories: {
@@ -164,7 +194,8 @@ export function reinforce(state: GameState, actorId: PlayerId, territoryId: Terr
       }
     },
     reinforcementsRemaining: state.reinforcementsRemaining - 1,
-    selectedTerritoryId: territoryId
+    selectedTerritoryId: territoryId,
+    events: [...state.events, event]
   };
 }
 
@@ -263,13 +294,19 @@ export function attack(
     winnerId
   };
 
+  const attackEvent: GameEvent = { type: 'attack', attacker: actorId, from, to, conquered };
+  const nextEvents = winnerId
+    ? [...state.events, attackEvent, { type: 'win' as const, winnerId }]
+    : [...state.events, attackEvent];
+
   return {
     ...state,
     territories: nextTerritories,
     winnerId,
     phase: winnerId ? 'finished' : state.phase,
     lastAttack,
-    selectedTerritoryId: from
+    selectedTerritoryId: from,
+    events: nextEvents
   };
 }
 
@@ -279,13 +316,15 @@ export function endTurn(state: GameState, actorId: PlayerId): GameState {
   }
 
   const nextTurn = nextPlayerId(actorId);
+  const event: GameEvent = { type: 'end-turn', playerId: actorId };
 
   return {
     ...state,
     currentTurn: nextTurn,
     reinforcementsRemaining: TURN_REINFORCEMENTS,
     lastAttack: null,
-    selectedTerritoryId: null
+    selectedTerritoryId: null,
+    events: [...state.events, event]
   };
 }
 
