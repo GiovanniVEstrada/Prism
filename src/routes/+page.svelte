@@ -3,7 +3,27 @@
   import { connectSocket, emitAction } from '$lib/client/socket';
   import { STONE_AGE_MAP } from '$lib/game/map';
   import { isDraftComplete, dominanceScore } from '$lib/game/engine';
+  import { playTurnStart, playConquest, playTerritoryLost, playWin, playLoss } from '$lib/client/audio';
   import type { GameEvent, GameState, PlayerId, TerritoryId } from '$lib/game/types';
+
+  // Precomputed adjacency edge list for the SVG overlay (unique pairs only).
+  const MAP_EDGES = (() => {
+    const seen = new Set<string>();
+    const edges: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+    for (const t of STONE_AGE_MAP) {
+      for (const adjId of t.adjacent) {
+        const key = [t.id, adjId].sort().join('--');
+        if (!seen.has(key)) {
+          seen.add(key);
+          const adj = STONE_AGE_MAP.find((m) => m.id === adjId)!;
+          edges.push({ x1: t.x, y1: t.y, x2: adj.x, y2: adj.y });
+        }
+      }
+    }
+    return edges;
+  })();
+
+  const CHOKE_POINTS = new Set<TerritoryId>(['bone-ridge', 'great-rift']);
 
   let selectedRoundCap = 12;
 
@@ -43,6 +63,67 @@
           (id) => state!.territories[id].ownerId !== myPlayerId && state!.territories[id].ownerId !== null
         )
       : [];
+
+  // Territories with only 1 unit — shown as at-risk regardless of owner.
+  $: atRiskIds = state
+    ? (Object.values(state.territories)
+        .filter((t) => t.ownerId !== null && t.units <= 1)
+        .map((t) => t.id as TerritoryId))
+    : ([] as TerritoryId[]);
+
+  // The viewer's territories that border at least one enemy.
+  $: contestedIds =
+    state && myPlayerId
+      ? (Object.values(state.territories)
+          .filter((t) => {
+            if (t.ownerId !== myPlayerId) return false;
+            const def = STONE_AGE_MAP.find((m) => m.id === t.id);
+            return (
+              def?.adjacent.some(
+                (adjId) =>
+                  state!.territories[adjId].ownerId !== null &&
+                  state!.territories[adjId].ownerId !== myPlayerId
+              ) ?? false
+            );
+          })
+          .map((t) => t.id as TerritoryId))
+      : ([] as TerritoryId[]);
+
+  // Sound triggers: compare event log and turn between snapshots.
+  let prevEventCount = -1;
+  let prevCurrentTurn: string | null = null;
+
+  $: if (state && !isSpectator) {
+    if (prevEventCount === -1) {
+      // Baseline on first snapshot — don't replay history sounds.
+      prevEventCount = state.events.length;
+      prevCurrentTurn = state.currentTurn;
+    } else {
+      for (let i = prevEventCount; i < state.events.length; i++) {
+        const event = state.events[i];
+        if (event.type === 'attack' && event.conquered && myPlayerId) {
+          if (event.attacker === myPlayerId) playConquest();
+          else playTerritoryLost();
+        }
+        if (event.type === 'win' && myPlayerId) {
+          if (state.winnerId === myPlayerId) playWin();
+          else playLoss();
+        }
+        if (event.type === 'draw') {
+          playLoss();
+        }
+      }
+      if (
+        state.phase === 'active' &&
+        state.currentTurn === myPlayerId &&
+        state.currentTurn !== prevCurrentTurn
+      ) {
+        playTurnStart();
+      }
+      prevEventCount = state.events.length;
+      prevCurrentTurn = state.currentTurn;
+    }
+  }
 
   function playerName_(id: PlayerId): string {
     return state?.players.find((p) => p.id === id)?.name ?? id;
@@ -379,11 +460,38 @@
   </section>
 
   <section class="board panel">
+    <div class="era-header">
+      <span class="era-name">Stone Age</span>
+      <span class="era-sub">Dominion Protocol</span>
+      {#if state?.phase === 'active'}
+        <span class="era-round">Round {Math.min(state.round, state.roundCap)} / {state.roundCap}</span>
+      {:else if state?.phase === 'draft'}
+        <span class="era-round">Draft</span>
+      {:else if state?.phase === 'finished'}
+        <span class="era-round">Finished</span>
+      {/if}
+    </div>
+
     <div class="map">
+      <!-- Adjacency lines -->
+      <svg class="map-edges" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {#each MAP_EDGES as edge}
+          <line x1="{edge.x1}" y1="{edge.y1}" x2="{edge.x2}" y2="{edge.y2}" />
+        {/each}
+      </svg>
+
+      <!-- Region labels -->
+      <span class="region-label" style="left:1%;top:2%">North</span>
+      <span class="region-label" style="left:1%;top:33%">Central</span>
+      <span class="region-label" style="left:1%;top:58%">South</span>
+
       {#each STONE_AGE_MAP as territory}
         {@const ts = state?.territories[territory.id]}
         {@const isSelectable = selectableIds.includes(territory.id)}
         {@const isAttackable = attackableIds.includes(territory.id)}
+        {@const isAtRisk = atRiskIds.includes(territory.id)}
+        {@const isContested = contestedIds.includes(territory.id)}
+        {@const isChoke = CHOKE_POINTS.has(territory.id)}
         <button
           type="button"
           class="territory"
@@ -392,11 +500,21 @@
           class:selected-territory={state?.selectedTerritoryId === territory.id}
           class:selectable={isSelectable && !isAttackable}
           class:attackable={isAttackable}
+          class:choke-point={isChoke}
           style="left:{territory.x}%;top:{territory.y}%"
           on:click={() => territoryAction(territory.id)}
         >
+          {#if isAtRisk}
+            <span class="status-dot at-risk-dot" title="At risk"></span>
+          {/if}
+          {#if isContested}
+            <span class="status-dot contested-dot" title="Contested"></span>
+          {/if}
           <span class="territory-label">{territory.label}</span>
           <strong class="territory-units">{ts?.units ?? 0}</strong>
+          {#if isChoke}
+            <span class="choke-label">choke</span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -736,16 +854,104 @@
   .board {
     padding: 0;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Era header bar at the top of the board */
+  .era-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid #2b333d;
+    flex-shrink: 0;
+  }
+
+  .era-name {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #d6f36a;
+  }
+
+  .era-sub {
+    font-size: 0.68rem;
+    color: #98a7b8;
+    letter-spacing: 0.08em;
+  }
+
+  .era-round {
+    font-size: 0.68rem;
+    color: #98a7b8;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
   }
 
   .map {
     position: relative;
     width: 100%;
-    height: 100%;
-    min-height: 720px;
+    flex: 1;
+    min-height: 680px;
     background:
       radial-gradient(circle at top left, rgba(214, 243, 106, 0.06), transparent 35%),
       linear-gradient(180deg, #1c242d 0%, #0d1116 100%);
+  }
+
+  /* Adjacency lines SVG overlay */
+  .map-edges {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .map-edges line {
+    stroke: rgba(255, 255, 255, 0.07);
+    stroke-width: 0.5;
+  }
+
+  /* Region labels */
+  .region-label {
+    position: absolute;
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: rgba(152, 167, 184, 0.3);
+    pointer-events: none;
+    writing-mode: vertical-lr;
+    transform: rotate(180deg);
+    user-select: none;
+  }
+
+  /* Territory status dots */
+  .status-dot {
+    position: absolute;
+    top: 5px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+  }
+
+  .at-risk-dot {
+    right: 5px;
+    background: #ff7d4d;
+  }
+
+  .contested-dot {
+    right: 14px;
+    background: #ffd04d;
+  }
+
+  /* Choke point label */
+  .choke-label {
+    font-size: 0.58rem;
+    color: rgba(214, 243, 106, 0.5);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .territory {
@@ -762,6 +968,10 @@
     text-align: left;
     padding: 10px 12px;
     transition: outline 80ms;
+  }
+
+  .choke-point {
+    border-color: rgba(214, 243, 106, 0.2);
   }
 
   .territory-label {
