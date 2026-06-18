@@ -1,5 +1,7 @@
 export type PlayerId = 'player1' | 'player2';
 
+export type FactionId = 'warband' | 'bastion' | 'merchant';
+
 export type Phase = 'lobby' | 'draft' | 'active' | 'finished';
 
 export type TerritoryId =
@@ -55,7 +57,8 @@ export type GameEvent =
   | { type: 'end-turn'; playerId: PlayerId }
   | { type: 'win'; winnerId: PlayerId }
   | { type: 'draw' }
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'faction-select'; playerId: PlayerId; factionId: FactionId };
 
 export interface GameState {
   roomCode: string;
@@ -72,6 +75,11 @@ export interface GameState {
   events: GameEvent[];
   round: number;
   roundCap: number;
+  // Faction system
+  factions: Record<PlayerId, FactionId | null>;
+  targetTerritories: Record<PlayerId, TerritoryId | null>;
+  factionCooldowns: Record<PlayerId, number>;
+  fortifiedTerritoryId: TerritoryId | null;
 }
 
 export interface RoomSnapshot {
@@ -85,6 +93,7 @@ export interface RoomSnapshot {
 export type ClientEvent =
   | { type: 'create-room'; playerName: string }
   | { type: 'join-room'; roomCode: string; playerName: string; token?: string }
+  | { type: 'select-faction'; factionId: FactionId }
   | { type: 'claim-territory'; territoryId: TerritoryId }
   | { type: 'start-game'; roundCap: number }
   | { type: 'reset-game' }

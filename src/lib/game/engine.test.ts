@@ -9,6 +9,7 @@ import {
   joinRoom,
   reinforce,
   resetGame,
+  selectFaction,
   selectTerritory,
   startGame
 } from './engine';
@@ -20,9 +21,14 @@ const guest: PlayerState = { id: 'player2', socketId: 'socket-b', name: 'Guest' 
 // Draft order for the 12-territory map.
 // player1 ends up with: frost-peaks, thunder-mesa, bone-ridge, red-gorge, river-delta, amber-plains
 // player2 ends up with: wolf-den, ochre-bluffs, great-rift, ash-marsh, ember-steppe, salt-flat
+// Fixed rng so target territory assignment is deterministic in tests.
+const fixedRng = () => 0;
+
 function createStartedGame() {
   let state = createRoom('PRISM', host);
   state = joinRoom(state, guest);
+  state = selectFaction(state, 'player1', 'merchant');
+  state = selectFaction(state, 'player2', 'warband');
   state = claimTerritory(state, 'player1', 'frost-peaks');
   state = claimTerritory(state, 'player2', 'wolf-den');
   state = claimTerritory(state, 'player1', 'thunder-mesa');
@@ -35,7 +41,7 @@ function createStartedGame() {
   state = claimTerritory(state, 'player2', 'ember-steppe');
   state = claimTerritory(state, 'player1', 'amber-plains');
   state = claimTerritory(state, 'player2', 'salt-flat');
-  return startGame(state, host.socketId);
+  return startGame(state, host.socketId, 12, fixedRng);
 }
 
 describe('game engine', () => {
@@ -84,6 +90,8 @@ describe('game engine', () => {
   it('does not allow the game to start before the draft is complete', () => {
     let state = createRoom('PRISM', host);
     state = joinRoom(state, guest);
+    state = selectFaction(state, 'player1', 'merchant');
+    state = selectFaction(state, 'player2', 'warband');
     state = claimTerritory(state, 'player1', 'frost-peaks');
 
     expect(() => startGame(state, host.socketId)).toThrow('All territories must be claimed first.');
@@ -95,6 +103,8 @@ describe('game engine', () => {
 
     expect(isDraftComplete(state)).toBe(false);
 
+    state = selectFaction(state, 'player1', 'merchant');
+    state = selectFaction(state, 'player2', 'warband');
     state = claimTerritory(state, 'player1', 'frost-peaks');
     state = claimTerritory(state, 'player2', 'wolf-den');
     state = claimTerritory(state, 'player1', 'thunder-mesa');
@@ -172,9 +182,9 @@ describe('game engine', () => {
   });
 
   it('grants reinforcements based on territory count', () => {
-    // player1 owns 6 territories at start → max(2, floor(6/3)) = 2
+    // player1 owns 6 territories → max(2, floor(6/3)) = 2, +1 Merchant bonus = 3
     const state = createStartedGame();
-    expect(state.reinforcementsRemaining).toBe(2);
+    expect(state.reinforcementsRemaining).toBe(3);
 
     // Simulate player1 losing 3 territories to player2 (3 owned → max(2, floor(3/3)) = 1 → clamped to 2)
     const weakState = {

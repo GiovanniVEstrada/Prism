@@ -12,6 +12,7 @@ import {
   reinforce,
   resetGame,
   roomReady,
+  selectFaction,
   selectTerritory,
   startGame
 } from '../src/lib/game/engine';
@@ -349,6 +350,9 @@ function applyAction(socketId: string, action: ClientEvent) {
     let nextState = state;
 
     switch (action.type) {
+      case 'select-faction':
+        nextState = selectFaction(state, playerId, action.factionId);
+        break;
       case 'claim-territory':
         if (!roomReady(state)) throw new Error('Waiting for second player.');
         nextState = claimTerritory(state, playerId, action.territoryId);

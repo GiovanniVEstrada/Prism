@@ -1,6 +1,7 @@
 import { STONE_AGE_MAP, STONE_AGE_TERRITORIES, isAdjacent } from './map';
 import type {
   AttackResult,
+  FactionId,
   GameEvent,
   GameState,
   PlayerId,
@@ -10,6 +11,40 @@ import type {
 } from './types';
 
 const DEFAULT_ROUND_CAP = 12;
+
+// ── Faction definitions ───────────────────────────────────────────────────────
+
+export const FACTIONS: Record<
+  FactionId,
+  { id: FactionId; name: string; role: string; power: string; description: string; defaultCooldown: number }
+> = {
+  warband: {
+    id: 'warband',
+    name: 'Warband',
+    role: 'Aggressive',
+    power: 'Overwhelm',
+    description: 'When active, your attacks force the defender to roll 1 die instead of 2.',
+    defaultCooldown: 2
+  },
+  bastion: {
+    id: 'bastion',
+    name: 'Bastion',
+    role: 'Defensive',
+    power: 'Fortify',
+    description: 'When active, your highest-unit territory defends with 3 dice instead of 2.',
+    defaultCooldown: 1
+  },
+  merchant: {
+    id: 'merchant',
+    name: 'Merchant Tribe',
+    role: 'Economic',
+    power: 'Surplus',
+    description: 'When active, gain +1 bonus reinforcement this turn.',
+    defaultCooldown: 1
+  }
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function createTerritories(): Record<TerritoryId, TerritoryState> {
   return STONE_AGE_TERRITORIES.reduce(
@@ -21,13 +56,35 @@ function createTerritories(): Record<TerritoryId, TerritoryState> {
   );
 }
 
-// Units granted to a player at the start of their turn based on territory control.
 function reinforcementsFor(state: GameState, playerId: PlayerId): number {
   const owned = Object.values(state.territories).filter((t) => t.ownerId === playerId).length;
   return Math.max(2, Math.floor(owned / 3));
 }
 
-// Dominance score: territory count + unit bonus. Used when the round cap is reached.
+// Whether a player currently holds their assigned target territory.
+function holdsTarget(state: GameState, playerId: PlayerId): boolean {
+  const targetId = state.targetTerritories[playerId];
+  return !!targetId && state.territories[targetId].ownerId === playerId;
+}
+
+// Update a player's cooldown at the end of their turn.
+function nextCooldown(state: GameState, playerId: PlayerId): number {
+  if (holdsTarget(state, playerId)) return 0;
+  const faction = state.factions[playerId];
+  if (!faction) return 0;
+  if (state.factionCooldowns[playerId] === 0) return FACTIONS[faction].defaultCooldown;
+  return state.factionCooldowns[playerId] - 1;
+}
+
+// Find the territory owned by a player with the highest unit count.
+function strongestTerritory(state: GameState, playerId: PlayerId): TerritoryId | null {
+  const owned = Object.values(state.territories).filter((t) => t.ownerId === playerId);
+  if (owned.length === 0) return null;
+  return owned.reduce((max, t) => (t.units > max.units ? t : max)).id;
+}
+
+// ── Exported read helpers ─────────────────────────────────────────────────────
+
 export function dominanceScore(state: GameState, playerId: PlayerId): number {
   const owned = Object.values(state.territories).filter((t) => t.ownerId === playerId);
   const units = owned.reduce((sum, t) => sum + t.units, 0);
@@ -39,7 +96,7 @@ function winnerByDominance(state: GameState): PlayerId | null {
   const p2 = dominanceScore(state, 'player2');
   if (p1 > p2) return 'player1';
   if (p2 > p1) return 'player2';
-  return null; // draw
+  return null;
 }
 
 export function isDraftComplete(state: GameState): boolean {
@@ -49,6 +106,8 @@ export function isDraftComplete(state: GameState): boolean {
 export function nextPlayerId(playerId: PlayerId): PlayerId {
   return playerId === 'player1' ? 'player2' : 'player1';
 }
+
+// ── Room lifecycle ────────────────────────────────────────────────────────────
 
 export function createRoom(roomCode: string, host: PlayerState): GameState {
   return {
@@ -65,7 +124,11 @@ export function createRoom(roomCode: string, host: PlayerState): GameState {
     selectedTerritoryId: null,
     events: [],
     round: 0,
-    roundCap: DEFAULT_ROUND_CAP
+    roundCap: DEFAULT_ROUND_CAP,
+    factions: { player1: null, player2: null },
+    targetTerritories: { player1: null, player2: null },
+    factionCooldowns: { player1: 0, player2: 0 },
+    fortifiedTerritoryId: null
   };
 }
 
@@ -87,6 +150,23 @@ export function joinRoom(state: GameState, player: PlayerState): GameState {
   };
 }
 
+// ── Faction selection ─────────────────────────────────────────────────────────
+
+export function selectFaction(state: GameState, actorId: PlayerId, factionId: FactionId): GameState {
+  if (state.phase !== 'draft') {
+    throw new Error('Factions can only be selected before the match starts.');
+  }
+
+  const event: GameEvent = { type: 'faction-select', playerId: actorId, factionId };
+  return {
+    ...state,
+    factions: { ...state.factions, [actorId]: factionId },
+    events: [...state.events, event]
+  };
+}
+
+// ── Draft ─────────────────────────────────────────────────────────────────────
+
 export function claimTerritory(state: GameState, actorId: PlayerId, territoryId: TerritoryId): GameState {
   if (state.phase !== 'draft') {
     throw new Error('Draft is not active.');
@@ -94,6 +174,10 @@ export function claimTerritory(state: GameState, actorId: PlayerId, territoryId:
 
   if (state.draftTurn !== actorId) {
     throw new Error('It is not your draft turn.');
+  }
+
+  if (!state.factions.player1 || !state.factions.player2) {
+    throw new Error('Both players must select a faction before the draft begins.');
   }
 
   const territory = state.territories[territoryId];
@@ -119,7 +203,14 @@ export function claimTerritory(state: GameState, actorId: PlayerId, territoryId:
   };
 }
 
-export function startGame(state: GameState, actorSocketId: string, roundCap: number = DEFAULT_ROUND_CAP): GameState {
+// ── Match start ───────────────────────────────────────────────────────────────
+
+export function startGame(
+  state: GameState,
+  actorSocketId: string,
+  roundCap: number = DEFAULT_ROUND_CAP,
+  rng: () => number = Math.random
+): GameState {
   if (state.hostSocketId !== actorSocketId) {
     throw new Error('Only the host can start the game.');
   }
@@ -136,14 +227,36 @@ export function startGame(state: GameState, actorSocketId: string, roundCap: num
     throw new Error('All territories must be claimed first.');
   }
 
+  // Assign target territories: each player must capture one of the opponent's current territories.
+  const p1Owned = STONE_AGE_TERRITORIES.filter((id) => state.territories[id].ownerId === 'player1');
+  const p2Owned = STONE_AGE_TERRITORIES.filter((id) => state.territories[id].ownerId === 'player2');
+  const targetTerritories = {
+    player1: p2Owned[Math.floor(rng() * p2Owned.length)],
+    player2: p1Owned[Math.floor(rng() * p1Owned.length)]
+  };
+
+  // All cooldowns start at 0 (power ready from turn 1).
+  const factionCooldowns = { player1: 0, player2: 0 };
+
+  // Apply first-turn effects for player1.
+  const p1Faction = state.factions.player1;
+  let reinforcementsRemaining = reinforcementsFor(state, 'player1');
+  if (p1Faction === 'merchant') reinforcementsRemaining += 1;
+
+  let fortifiedTerritoryId: TerritoryId | null = null;
+  if (p1Faction === 'bastion') fortifiedTerritoryId = strongestTerritory(state, 'player1');
+
   return {
     ...state,
     phase: 'active',
     currentTurn: 'player1',
-    reinforcementsRemaining: reinforcementsFor(state, 'player1'),
+    reinforcementsRemaining,
     round: 1,
     roundCap,
     lastAttack: null,
+    targetTerritories,
+    factionCooldowns,
+    fortifiedTerritoryId,
     events: [...state.events, { type: 'start' }]
   };
 }
@@ -168,9 +281,16 @@ export function resetGame(state: GameState, actorSocketId: string): GameState {
     round: 0,
     lastAttack: null,
     selectedTerritoryId: null,
+    // Reset faction selections — players pick fresh for the rematch.
+    factions: { player1: null, player2: null },
+    targetTerritories: { player1: null, player2: null },
+    factionCooldowns: { player1: 0, player2: 0 },
+    fortifiedTerritoryId: null,
     events: [{ type: 'reset' }]
   };
 }
+
+// ── Active phase ──────────────────────────────────────────────────────────────
 
 export function selectTerritory(state: GameState, actorId: PlayerId, territoryId: TerritoryId): GameState {
   if (state.phase !== 'active') {
@@ -268,8 +388,15 @@ export function attack(
     throw new Error('You need at least 2 units to attack.');
   }
 
+  const powerReady = state.factionCooldowns[actorId] === 0;
+  const faction = state.factions[actorId];
+
   const attackDice = Math.min(3, attacker.units - 1);
-  const defendDice = Math.min(2, defender.units);
+  // Warband: defender rolls 1 die instead of 2 when power is active.
+  const defendDice = faction === 'warband' && powerReady
+    ? Math.min(1, defender.units)
+    : Math.min(2, defender.units);
+
   const attackRolls = Array.from({ length: attackDice }, () => 1 + Math.floor(rng() * 6)).sort((a, b) => b - a);
   const defendRolls = Array.from({ length: defendDice }, () => 1 + Math.floor(rng() * 6)).sort((a, b) => b - a);
 
@@ -278,10 +405,6 @@ export function attack(
   const nextDefenderUnits = defender.units - defendLosses;
   const conquered = nextDefenderUnits <= 0;
 
-  // On conquest, move the full attack dice count into the captured territory.
-  // When conquered, attackLosses is always 0 (winning all comparisons is required to
-  // reduce a defender to 0 in one roll), so nextAttackerUnits === attacker.units and
-  // attacker.units - attackDice >= 1 is guaranteed by the attackDice formula.
   const nextTerritories = {
     ...state.territories,
     [from]: {
@@ -330,6 +453,12 @@ export function endTurn(state: GameState, actorId: PlayerId): GameState {
   const nextRound = actorId === 'player2' ? state.round + 1 : state.round;
   const endTurnEvent: GameEvent = { type: 'end-turn', playerId: actorId };
 
+  // Update current player's cooldown.
+  const updatedCooldowns: Record<PlayerId, number> = {
+    ...state.factionCooldowns,
+    [actorId]: nextCooldown(state, actorId)
+  };
+
   // Round cap: game ends after player2 completes the final round.
   if (actorId === 'player2' && nextRound > state.roundCap) {
     const winnerId = winnerByDominance(state);
@@ -343,20 +472,40 @@ export function endTurn(state: GameState, actorId: PlayerId): GameState {
       reinforcementsRemaining: 0,
       lastAttack: null,
       selectedTerritoryId: null,
+      factionCooldowns: updatedCooldowns,
+      fortifiedTerritoryId: null,
       events: [...state.events, endTurnEvent, endEvent]
     };
+  }
+
+  // Set up the next player's turn with faction power effects.
+  const nextFaction = state.factions[nextTurn];
+  const nextPowerReady = updatedCooldowns[nextTurn] === 0;
+
+  let reinforcementsRemaining = reinforcementsFor(state, nextTurn);
+  // Merchant Tribe: +1 bonus reinforcement when power is active.
+  if (nextFaction === 'merchant' && nextPowerReady) reinforcementsRemaining += 1;
+
+  // Bastion: fortify the strongest territory when power is active.
+  let fortifiedTerritoryId: TerritoryId | null = null;
+  if (nextFaction === 'bastion' && nextPowerReady) {
+    fortifiedTerritoryId = strongestTerritory(state, nextTurn);
   }
 
   return {
     ...state,
     currentTurn: nextTurn,
-    reinforcementsRemaining: reinforcementsFor(state, nextTurn),
+    reinforcementsRemaining,
     round: nextRound,
     lastAttack: null,
     selectedTerritoryId: null,
+    factionCooldowns: updatedCooldowns,
+    fortifiedTerritoryId,
     events: [...state.events, endTurnEvent]
   };
 }
+
+// ── Utility exports ───────────────────────────────────────────────────────────
 
 export function getPlayerIdBySocket(state: GameState, socketId: string): PlayerId | null {
   return state.players.find((player) => player.socketId === socketId)?.id ?? null;

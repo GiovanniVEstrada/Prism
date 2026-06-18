@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { connectSocket, emitAction } from '$lib/client/socket';
   import { STONE_AGE_MAP } from '$lib/game/map';
-  import { isDraftComplete, dominanceScore } from '$lib/game/engine';
+  import { isDraftComplete, dominanceScore, FACTIONS } from '$lib/game/engine';
   import { playTurnStart, playConquest, playTerritoryLost, playWin, playLoss } from '$lib/client/audio';
-  import type { GameEvent, GameState, PlayerId, TerritoryId } from '$lib/game/types';
+  import type { FactionId, GameEvent, GameState, PlayerId, TerritoryId } from '$lib/game/types';
 
   // Precomputed adjacency edge list for the SVG overlay (unique pairs only).
   const MAP_EDGES = (() => {
@@ -63,6 +63,17 @@
           (id) => state!.territories[id].ownerId !== myPlayerId && state!.territories[id].ownerId !== null
         )
       : [];
+
+  // Faction-related reactive values.
+  $: myFaction = myPlayerId ? (state?.factions[myPlayerId] ?? null) : null;
+  $: myTarget = myPlayerId ? (state?.targetTerritories[myPlayerId] ?? null) : null;
+  $: opponentTarget = myPlayerId
+    ? (state?.targetTerritories[myPlayerId === 'player1' ? 'player2' : 'player1'] ?? null)
+    : null;
+  $: myPowerReady = myPlayerId ? (state?.factionCooldowns[myPlayerId] === 0) : false;
+  $: myPowerCooldown = myPlayerId ? (state?.factionCooldowns[myPlayerId] ?? 0) : 0;
+  $: bothFactionsSelected = !!(state?.factions.player1 && state?.factions.player2);
+  $: myFactionSelected = !!(myPlayerId && state?.factions[myPlayerId]);
 
   // Territories with only 1 unit — shown as at-risk regardless of owner.
   $: atRiskIds = state
@@ -153,6 +164,8 @@
         return 'Match ended in a draw';
       case 'reset':
         return 'New match started';
+      case 'faction-select':
+        return `${playerName_(event.playerId)} chose ${FACTIONS[event.factionId].name}`;
     }
   }
 
@@ -319,6 +332,34 @@
 
         {#if state.phase === 'draft'}
           <p class="muted small">Draft: {Object.values(state.territories).filter((t) => t.ownerId).length}/{STONE_AGE_MAP.length} claimed</p>
+
+          {#if !myFactionSelected && myPlayerId && !isSpectator}
+            <div class="faction-picker">
+              <p class="muted small">Choose your faction</p>
+              <div class="faction-options">
+                {#each Object.values(FACTIONS) as faction}
+                  <button
+                    type="button"
+                    class="faction-card"
+                    on:click={() => emitAction({ type: 'select-faction', factionId: faction.id as FactionId })}
+                  >
+                    <span class="faction-role">{faction.role}</span>
+                    <span class="faction-name">{faction.name}</span>
+                    <span class="faction-power-name">{faction.power}</span>
+                    <span class="faction-desc">{faction.description}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {:else if myFactionSelected && myFaction}
+            <div class="faction-chosen">
+              <span class="faction-role">{FACTIONS[myFaction].role}</span>
+              <span class="faction-name">{FACTIONS[myFaction].name}</span>
+              {#if !bothFactionsSelected}
+                <span class="muted small">Waiting for opponent...</span>
+              {/if}
+            </div>
+          {/if}
         {/if}
 
         {#if state.phase === 'active'}
@@ -329,6 +370,9 @@
           {#each state.players as player}
             {@const score = dominanceScore(state, player.id)}
             {@const territories = Object.values(state.territories).filter((t) => t.ownerId === player.id).length}
+            {@const pFaction = state.factions[player.id]}
+            {@const pCooldown = state.factionCooldowns[player.id]}
+            {@const pPowerReady = pCooldown === 0}
             <div
               class="player-row"
               class:viewer={player.socketId === viewerSocketId}
@@ -342,6 +386,18 @@
                   · {score}pts
                 {/if}
               </span>
+              {#if pFaction}
+                <div class="player-faction">
+                  <span class="faction-chip">{FACTIONS[pFaction].name}</span>
+                  {#if state.phase === 'active'}
+                    {#if pPowerReady}
+                      <span class="power-ready">{FACTIONS[pFaction].power} ✦</span>
+                    {:else}
+                      <span class="power-cooldown">{pCooldown}t</span>
+                    {/if}
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -492,6 +548,9 @@
         {@const isAtRisk = atRiskIds.includes(territory.id)}
         {@const isContested = contestedIds.includes(territory.id)}
         {@const isChoke = CHOKE_POINTS.has(territory.id)}
+        {@const isMyTarget = myTarget === territory.id}
+        {@const isOpponentTarget = opponentTarget === territory.id}
+        {@const isFortified = state?.fortifiedTerritoryId === territory.id}
         <button
           type="button"
           class="territory"
@@ -501,6 +560,9 @@
           class:selectable={isSelectable && !isAttackable}
           class:attackable={isAttackable}
           class:choke-point={isChoke}
+          class:my-target={isMyTarget}
+          class:opponent-target={isOpponentTarget}
+          class:fortified={isFortified}
           style="left:{territory.x}%;top:{territory.y}%"
           on:click={() => territoryAction(territory.id)}
         >
@@ -512,9 +574,11 @@
           {/if}
           <span class="territory-label">{territory.label}</span>
           <strong class="territory-units">{ts?.units ?? 0}</strong>
-          {#if isChoke}
-            <span class="choke-label">choke</span>
-          {/if}
+          <div class="territory-tags">
+            {#if isChoke}<span class="tag tag-choke">choke</span>{/if}
+            {#if isMyTarget}<span class="tag tag-target">target</span>{/if}
+            {#if isFortified}<span class="tag tag-fortified">fortified</span>{/if}
+          </div>
         </button>
       {/each}
     </div>
@@ -801,6 +865,99 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* ── Faction picker ──────────────────────────────────────────────────── */
+
+  .faction-picker {
+    display: grid;
+    gap: 8px;
+  }
+
+  .faction-options {
+    display: grid;
+    gap: 6px;
+  }
+
+  .faction-card {
+    display: grid;
+    gap: 3px;
+    text-align: left;
+    padding: 10px 12px;
+    background: #1b2128;
+    border: 1px solid #364150;
+    border-radius: 6px;
+    color: #f4f7fb;
+    cursor: pointer;
+    font-weight: 400;
+    transition: border-color 120ms;
+  }
+
+  .faction-card:hover {
+    border-color: #d6f36a;
+  }
+
+  .faction-role {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #98a7b8;
+  }
+
+  .faction-name {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #f4f7fb;
+  }
+
+  .faction-power-name {
+    font-size: 0.72rem;
+    color: #d6f36a;
+    font-weight: 600;
+  }
+
+  .faction-desc {
+    font-size: 0.72rem;
+    color: #98a7b8;
+    line-height: 1.4;
+  }
+
+  .faction-chosen {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: #1e2a15;
+    border: 1px solid #d6f36a44;
+    border-radius: 6px;
+  }
+
+  /* ── Player faction status ───────────────────────────────────────────── */
+
+  .player-faction {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72rem;
+  }
+
+  .faction-chip {
+    color: #98a7b8;
+  }
+
+  .power-ready {
+    color: #d6f36a;
+    font-weight: 600;
+  }
+
+  .power-cooldown {
+    color: #98a7b8;
+    background: #1b2128;
+    border: 1px solid #364150;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.68rem;
+  }
+
   /* ── Spectator ───────────────────────────────────────────────────────── */
 
   .spectator-notice {
@@ -946,12 +1103,49 @@
     background: #ffd04d;
   }
 
-  /* Choke point label */
-  .choke-label {
-    font-size: 0.58rem;
-    color: rgba(214, 243, 106, 0.5);
+  /* Territory tag row */
+  .territory-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font-size: 0.56rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  .tag-choke {
+    color: rgba(214, 243, 106, 0.5);
+    border: 1px solid rgba(214, 243, 106, 0.15);
+  }
+
+  /* Your assigned target territory */
+  .my-target {
+    outline: 2px dashed #d6f36a;
+  }
+
+  /* Opponent's target (territory they need to capture) */
+  .opponent-target {
+    outline: 2px dashed #ff7d4d44;
+  }
+
+  .tag-target {
+    color: #d6f36a;
+    border: 1px solid #d6f36a44;
+  }
+
+  /* Bastion fortified territory */
+  .fortified {
+    box-shadow: inset 0 0 0 2px rgba(90, 143, 212, 0.5);
+  }
+
+  .tag-fortified {
+    color: #5a8fd4;
+    border: 1px solid #5a8fd444;
   }
 
   .territory {
