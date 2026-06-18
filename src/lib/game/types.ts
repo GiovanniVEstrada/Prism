@@ -1,5 +1,7 @@
 export type PlayerId = 'player1' | 'player2';
 
+export type BotDifficulty = 'passive' | 'aggressive';
+
 export type FactionId = 'warband' | 'bastion' | 'merchant';
 
 export type Phase = 'lobby' | 'draft' | 'active' | 'finished';
@@ -93,6 +95,7 @@ export interface RoomSnapshot {
 export type ClientEvent =
   | { type: 'create-room'; playerName: string }
   | { type: 'join-room'; roomCode: string; playerName: string; token?: string }
+  | { type: 'add-bot'; difficulty: BotDifficulty }
   | { type: 'select-faction'; factionId: FactionId }
   | { type: 'claim-territory'; territoryId: TerritoryId }
   | { type: 'start-game'; roundCap: number }

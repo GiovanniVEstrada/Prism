@@ -16,7 +16,8 @@ import {
   selectTerritory,
   startGame
 } from '../src/lib/game/engine';
-import type { ClientEvent, GameState, PlayerState, RoomSnapshot } from '../src/lib/game/types';
+import { botPickAction, BOT_SOCKET_ID } from '../src/lib/game/bot';
+import type { BotDifficulty, ClientEvent, GameState, PlayerId, PlayerState, RoomSnapshot } from '../src/lib/game/types';
 
 const PORT = Number(process.env.PRISM_SERVER_PORT ?? process.env.PORT ?? 3001);
 const RECONNECT_WINDOW_MS = 45_000;
@@ -40,6 +41,11 @@ const playerTokens = new Map<string, string>();
 // Key: roomCode, value: Set of spectator socketIds.
 const roomSpectators = new Map<string, Set<string>>();
 
+// Bot rooms track which rooms have an AI opponent.
+type BotEntry = { botId: PlayerId; difficulty: BotDifficulty };
+const botRooms = new Map<string, BotEntry>();
+const botTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 const httpServer = createServer((_, response) => {
   response.writeHead(200, { 'content-type': 'text/plain' });
   response.end('Prism socket server is live.\n');
@@ -57,7 +63,8 @@ function persistRooms() {
   try {
     mkdirSync('./data', { recursive: true });
     const payload = {
-      rooms: Object.fromEntries(roomStates),
+      // Bot rooms don't survive restarts — the AI socket is not a real connection.
+      rooms: Object.fromEntries([...roomStates].filter(([code]) => !botRooms.has(code))),
       tokens: Object.fromEntries(playerTokens)
     };
     writeFileSync(PERSIST_PATH, JSON.stringify(payload), 'utf8');
@@ -240,6 +247,37 @@ function emitSnapshot(roomCode: string) {
   }
 }
 
+// ── Bot scheduler ─────────────────────────────────────────────────────────────
+
+function scheduleBotTurn(roomCode: string) {
+  const bot = botRooms.get(roomCode);
+  if (!bot) return;
+
+  const state = roomStates.get(roomCode);
+  if (!state || state.phase === 'finished' || state.phase === 'lobby') return;
+
+  const needsFaction = state.phase === 'draft' && !state.factions[bot.botId];
+  const isDraftTurn = state.phase === 'draft' && state.draftTurn === bot.botId;
+  const isActiveTurn = state.phase === 'active' && state.currentTurn === bot.botId;
+  if (!needsFaction && !isDraftTurn && !isActiveTurn) return;
+
+  const existing = botTimers.get(roomCode);
+  if (existing) clearTimeout(existing);
+
+  // Faction selection is near-instant so the human isn't blocked waiting.
+  const delay = needsFaction ? 200 : bot.difficulty === 'aggressive' ? 600 : 950;
+
+  const timer = setTimeout(() => {
+    botTimers.delete(roomCode);
+    const current = roomStates.get(roomCode);
+    if (!current) return;
+    const action = botPickAction(current, bot.botId, bot.difficulty);
+    if (action) applyAction(BOT_SOCKET_ID, action);
+  }, delay);
+
+  botTimers.set(roomCode, timer);
+}
+
 function withRoom(socketId: string): GameState {
   const roomCode = socketToRoom.get(socketId);
   if (!roomCode) throw new Error('You are not in a room.');
@@ -272,6 +310,28 @@ function applyAction(socketId: string, action: ClientEvent) {
 
       persistRooms();
       emitSnapshot(roomCode);
+      return;
+    }
+
+    if (action.type === 'add-bot') {
+      removeSocketFromRoom(BOT_SOCKET_ID);
+      const state = withRoom(socketId);
+      if (state.hostSocketId !== socketId) throw new Error('Only the host can add a bot.');
+      if (state.players.length !== 1) throw new Error('Can only add a bot to a room with one player.');
+
+      const botPlayer: PlayerState = {
+        id: 'player2',
+        socketId: BOT_SOCKET_ID,
+        name: action.difficulty === 'aggressive' ? 'Aggressor' : 'Warden'
+      };
+      const nextState = joinRoom(state, botPlayer);
+      roomStates.set(state.roomCode, nextState);
+      socketToRoom.set(BOT_SOCKET_ID, state.roomCode);
+      botRooms.set(state.roomCode, { botId: 'player2', difficulty: action.difficulty });
+
+      persistRooms();
+      emitSnapshot(state.roomCode);
+      scheduleBotTurn(state.roomCode);
       return;
     }
 
@@ -385,6 +445,7 @@ function applyAction(socketId: string, action: ClientEvent) {
     roomStates.set(state.roomCode, nextState);
     persistRooms();
     emitSnapshot(state.roomCode);
+    scheduleBotTurn(state.roomCode);
   } catch (error) {
     emitError(socketId, error instanceof Error ? error.message : 'Unknown server error.');
   }

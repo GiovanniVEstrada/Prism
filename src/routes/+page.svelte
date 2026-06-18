@@ -26,6 +26,7 @@
   const CHOKE_POINTS = new Set<TerritoryId>(['bone-ridge', 'great-rift']);
 
   let selectedRoundCap = 12;
+  let botDifficulty: 'passive' | 'aggressive' = 'passive';
 
   let playerName = '';
   let roomCode = '';
@@ -264,9 +265,9 @@
 
 <div class="shell">
   <section class="sidebar">
-    <div class="panel">
+    <div class="panel logo-panel">
       <h1>Prism</h1>
-      <p class="muted">One room. One map. Two players.</p>
+      <p class="logo-sub">Stone Age · Dominion</p>
     </div>
 
     <div class="panel stack">
@@ -300,6 +301,23 @@
         <p class="error">{errorMessage}</p>
       {/if}
     </div>
+
+    {#if state && state.phase === 'lobby' && state.players.length === 1 && viewerSocketId === state.hostSocketId}
+      <div class="panel stack">
+        <h2>Solo mode</h2>
+        <div class="round-cap-options">
+          {#each [['passive', 'Warden'], ['aggressive', 'Aggressor']] as [val, label]}
+            <label class="cap-option" class:cap-selected={botDifficulty === val}>
+              <input type="radio" bind:group={botDifficulty} value={val} />
+              {label}
+            </label>
+          {/each}
+        </div>
+        <button type="button" on:click={() => emitAction({ type: 'add-bot', difficulty: botDifficulty })}>
+          Add bot opponent
+        </button>
+      </div>
+    {/if}
 
     {#if state}
       <div class="panel stack">
@@ -373,12 +391,13 @@
             {@const pFaction = state.factions[player.id]}
             {@const pCooldown = state.factionCooldowns[player.id]}
             {@const pPowerReady = pCooldown === 0}
+            {@const isBot = player.socketId === 'bot'}
             <div
               class="player-row"
               class:viewer={player.socketId === viewerSocketId}
               class:active-player={state.currentTurn === player.id && state.phase === 'active'}
             >
-              <span class="player-name">{player.name}</span>
+              <span class="player-name">{player.name}{#if isBot}<span class="bot-tag">AI</span>{/if}</span>
               <span class="muted player-id">{player.id}</span>
               <span class="player-stats">
                 {territories}t
@@ -588,32 +607,39 @@
 <style>
   :global(body) {
     margin: 0;
-    font-family: Inter, system-ui, sans-serif;
-    background: #101317;
-    color: #f4f7fb;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    background: #07090d;
+    color: #b4c8d8;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
   }
 
   .shell {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: 16px;
-    padding: 16px;
+    grid-template-columns: 292px 1fr;
+    gap: 10px;
+    padding: 10px;
     box-sizing: border-box;
   }
 
   .sidebar,
   .stack {
     display: grid;
-    gap: 14px;
+    gap: 8px;
     align-content: start;
   }
 
   .panel {
-    background: #171c22;
-    border: 1px solid #2b333d;
-    border-radius: 8px;
+    background: #0c1118;
+    border: 1px solid #182030;
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+
+  .logo-panel {
     padding: 14px;
+    border-color: #1c2a3c;
   }
 
   h1,
@@ -623,82 +649,120 @@
   }
 
   h1 {
-    font-size: 1.75rem;
+    font-size: 1.15rem;
+    font-weight: 900;
+    letter-spacing: 0.26em;
+    color: #d6f36a;
+    text-transform: uppercase;
+  }
+
+  .logo-sub {
+    font-size: 0.58rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #4e7090;
+    margin-top: 4px;
   }
 
   h2 {
-    font-size: 0.9rem;
+    font-size: 0.56rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #98a7b8;
+    letter-spacing: 0.2em;
+    color: #4e6a82;
+    border-bottom: 1px solid #111c2a;
+    padding-bottom: 7px;
   }
 
   .muted {
-    color: #98a7b8;
+    color: #607e98;
   }
 
   .small {
-    font-size: 0.8rem;
+    font-size: 0.78rem;
   }
 
-  .status,
+  .status {
+    font-size: 0.67rem;
+    color: #5a7a90;
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+    letter-spacing: 0.04em;
+  }
+
   .room {
-    color: #98a7b8;
-    font-size: 0.85rem;
+    font-size: 0.74rem;
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+    color: #5a7a90;
+    letter-spacing: 0.06em;
   }
 
   .error {
-    color: #ff7d7d;
-    font-size: 0.85rem;
+    font-size: 0.74rem;
+    color: #d04830;
+    background: #160a08;
+    border: 1px solid #38160e;
+    border-radius: 3px;
+    padding: 6px 10px;
   }
 
   label {
     display: grid;
-    gap: 6px;
+    gap: 5px;
+    font-size: 0.62rem;
+    color: #5a7a90;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
   }
 
   input,
   button {
-    border-radius: 6px;
-    border: 1px solid #364150;
-    padding: 9px 12px;
+    border-radius: 3px;
+    border: 1px solid #1c2f45;
+    padding: 8px 12px;
     font: inherit;
+    font-size: 0.82rem;
+    box-sizing: border-box;
   }
 
   input {
-    background: #0f1419;
-    color: inherit;
+    background: #060a10;
+    color: #b4c8d8;
+  }
+
+  input::placeholder {
+    color: #304860;
   }
 
   button {
     background: #d6f36a;
-    color: #0e1217;
+    color: #080b04;
     cursor: pointer;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.03em;
   }
 
   button:disabled {
-    opacity: 0.4;
+    opacity: 0.22;
     cursor: not-allowed;
   }
 
   .ghost {
-    background: #1b2128;
-    color: #f4f7fb;
+    background: transparent;
+    color: #385870;
     font-weight: 400;
+    border-color: #182030;
   }
 
   .inline {
     display: grid;
-    grid-template-columns: 1fr 80px 1fr;
-    gap: 8px;
+    grid-template-columns: 1fr 64px 1fr;
+    gap: 6px;
     align-items: end;
   }
 
   .room-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   .room-row .room {
@@ -708,50 +772,80 @@
   /* ── Turn header ─────────────────────────────────────────────────────── */
 
   .turn-header {
-    min-height: 1.4rem;
+    min-height: 1.25rem;
   }
 
   .turn-mine {
-    color: #d6f36a;
+    font-size: 0.72rem;
     font-weight: 700;
+    color: #d6f36a;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
 
   .turn-theirs {
-    color: #98a7b8;
+    font-size: 0.72rem;
+    color: #385870;
+    letter-spacing: 0.06em;
   }
 
   /* ── Players ─────────────────────────────────────────────────────────── */
 
   .players {
     display: grid;
-    gap: 8px;
+    gap: 4px;
   }
 
   .player-row {
     display: grid;
     grid-template-columns: 1fr auto auto;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
-    padding: 6px 8px;
-    border-radius: 6px;
+    padding: 5px 8px;
+    border-radius: 3px;
     border: 1px solid transparent;
   }
 
   .player-row.viewer {
-    border-color: #2b333d;
+    border-color: #182030;
   }
 
   .player-row.active-player {
-    border-color: #d6f36a44;
+    border-color: #d6f36a1e;
+    background: #0b1108;
   }
 
   .player-name {
+    font-size: 0.82rem;
     font-weight: 600;
+    color: #b4c8d8;
   }
 
   .player-id {
-    font-size: 0.78rem;
-    color: #98a7b8;
+    font-size: 0.6rem;
+    color: #4a6a82;
+    font-family: ui-monospace, monospace;
+  }
+
+  .bot-tag {
+    display: inline-block;
+    margin-left: 5px;
+    font-size: 0.52rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #d6f36a;
+    background: #1a2208;
+    border: 1px solid #d6f36a33;
+    border-radius: 2px;
+    padding: 1px 4px;
+    vertical-align: middle;
+  }
+
+  .player-stats {
+    font-size: 0.67rem;
+    color: #5a7a90;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.02em;
   }
 
   /* ── Actions ─────────────────────────────────────────────────────────── */
@@ -759,54 +853,60 @@
   .action-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
   }
 
   .targets {
     display: grid;
-    gap: 6px;
+    gap: 4px;
   }
 
   /* ── Last combat ─────────────────────────────────────────────────────── */
 
   .dice-row {
     display: flex;
-    gap: 16px;
-    font-size: 0.85rem;
-    color: #98a7b8;
+    gap: 14px;
+    font-size: 0.7rem;
+    color: #5a7a90;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.04em;
   }
 
   .conquest-label {
+    font-size: 0.65rem;
+    font-weight: 700;
     color: #d6f36a;
-    font-weight: 600;
-    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
   }
 
   /* ── Game over ───────────────────────────────────────────────────────── */
 
   .game-over {
-    border: 1px solid #d6f36a;
-    border-radius: 8px;
-    padding: 12px 14px;
+    border: 1px solid #d6f36a2a;
+    background: #090e06;
+    border-radius: 3px;
+    padding: 10px 12px;
     display: grid;
-    gap: 6px;
+    gap: 5px;
   }
 
   .game-over-label {
-    font-size: 0.75rem;
-    color: #98a7b8;
+    font-size: 0.56rem;
+    color: #5a7a90;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.16em;
   }
 
   .game-over-winner {
-    font-size: 1.25rem;
-    font-weight: 700;
+    font-size: 1.3rem;
+    font-weight: 900;
     color: #d6f36a;
+    letter-spacing: 0.06em;
   }
 
   .game-over-draw {
-    color: #98a7b8;
+    color: #385870;
   }
 
   /* ── Round counter ───────────────────────────────────────────────────── */
@@ -814,37 +914,42 @@
   .round-row {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: 6px;
   }
 
   .round-value {
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    font-family: ui-monospace, monospace;
+    color: #b4c8d8;
+    letter-spacing: 0.04em;
   }
 
   /* ── Match length picker ─────────────────────────────────────────────── */
 
   .round-cap-picker {
     display: grid;
-    gap: 6px;
+    gap: 5px;
   }
 
   .round-cap-options {
     display: flex;
-    gap: 6px;
+    gap: 4px;
   }
 
   .cap-option {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 5px 10px;
-    border-radius: 6px;
-    border: 1px solid #364150;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid #182030;
     cursor: pointer;
-    font-size: 0.85rem;
-    background: #1b2128;
-    color: #98a7b8;
+    font-size: 0.7rem;
+    background: #060a10;
+    color: #507090;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.04em;
   }
 
   .cap-option input[type='radio'] {
@@ -852,82 +957,78 @@
   }
 
   .cap-selected {
-    border-color: #d6f36a;
+    border-color: #d6f36a55;
     color: #d6f36a;
-    background: #1e2a15;
+    background: #0b1008;
   }
 
   /* ── Player stats ────────────────────────────────────────────────────── */
 
-  .player-stats {
-    font-size: 0.78rem;
-    color: #98a7b8;
-    font-variant-numeric: tabular-nums;
-  }
+  /* (defined above in .player-stats) */
 
   /* ── Faction picker ──────────────────────────────────────────────────── */
 
   .faction-picker {
     display: grid;
-    gap: 8px;
+    gap: 6px;
   }
 
   .faction-options {
     display: grid;
-    gap: 6px;
+    gap: 4px;
   }
 
   .faction-card {
     display: grid;
-    gap: 3px;
+    gap: 2px;
     text-align: left;
-    padding: 10px 12px;
-    background: #1b2128;
-    border: 1px solid #364150;
-    border-radius: 6px;
-    color: #f4f7fb;
+    padding: 9px 12px;
+    background: #060a10;
+    border: 1px solid #182030;
+    border-radius: 3px;
+    color: #b4c8d8;
     cursor: pointer;
     font-weight: 400;
-    transition: border-color 120ms;
+    transition: border-color 80ms;
   }
 
   .faction-card:hover {
-    border-color: #d6f36a;
+    border-color: #d6f36a44;
   }
 
   .faction-role {
-    font-size: 0.62rem;
+    font-size: 0.54rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #98a7b8;
+    letter-spacing: 0.16em;
+    color: #4a6a82;
   }
 
   .faction-name {
-    font-size: 0.88rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    color: #f4f7fb;
+    color: #b4c8d8;
   }
 
   .faction-power-name {
-    font-size: 0.72rem;
+    font-size: 0.67rem;
     color: #d6f36a;
     font-weight: 600;
   }
 
   .faction-desc {
-    font-size: 0.72rem;
-    color: #98a7b8;
-    line-height: 1.4;
+    font-size: 0.64rem;
+    color: #507090;
+    line-height: 1.5;
   }
 
   .faction-chosen {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 6px 10px;
-    background: #1e2a15;
-    border: 1px solid #d6f36a44;
-    border-radius: 6px;
+    background: #0a1008;
+    border: 1px solid #d6f36a2a;
+    border-radius: 3px;
   }
 
   /* ── Player faction status ───────────────────────────────────────────── */
@@ -936,65 +1037,77 @@
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.72rem;
+    gap: 5px;
+    font-size: 0.63rem;
   }
 
   .faction-chip {
-    color: #98a7b8;
+    color: #507090;
+    font-family: ui-monospace, monospace;
   }
 
   .power-ready {
     color: #d6f36a;
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
 
   .power-cooldown {
-    color: #98a7b8;
-    background: #1b2128;
-    border: 1px solid #364150;
-    border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 0.68rem;
+    color: #507090;
+    background: #060a10;
+    border: 1px solid #182030;
+    border-radius: 2px;
+    padding: 1px 4px;
+    font-size: 0.6rem;
+    font-family: ui-monospace, monospace;
   }
 
   /* ── Spectator ───────────────────────────────────────────────────────── */
 
   .spectator-notice {
-    font-size: 0.75rem;
-    color: #98a7b8;
-    background: #1b2128;
-    border: 1px solid #2b333d;
-    border-radius: 6px;
-    padding: 5px 10px;
+    font-size: 0.6rem;
+    color: #507090;
+    background: #060a10;
+    border: 1px solid #182030;
+    border-radius: 3px;
+    padding: 4px 10px;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.12em;
   }
 
   .spectator-badge {
-    font-size: 0.72rem;
-    color: #98a7b8;
-    background: #1b2128;
-    border: 1px solid #2b333d;
-    border-radius: 4px;
-    padding: 1px 6px;
-    margin-left: 6px;
+    font-size: 0.6rem;
+    color: #507090;
+    background: #060a10;
+    border: 1px solid #182030;
+    border-radius: 2px;
+    padding: 1px 5px;
+    margin-left: 5px;
     vertical-align: middle;
+    font-family: ui-monospace, monospace;
   }
 
   /* ── Event log ───────────────────────────────────────────────────────── */
 
   .event-log {
     display: grid;
-    gap: 4px;
-    max-height: 180px;
+    gap: 3px;
+    max-height: 160px;
     overflow-y: auto;
   }
 
   .event {
-    font-size: 0.8rem;
-    color: #98a7b8;
-    line-height: 1.4;
+    font-size: 0.67rem;
+    color: #4e7090;
+    line-height: 1.45;
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+  }
+
+  .event::before {
+    content: '› ';
+    color: #182030;
   }
 
   .event-win {
@@ -1002,8 +1115,16 @@
     font-weight: 600;
   }
 
+  .event-win::before {
+    color: #6a8030;
+  }
+
   .event-reset {
-    color: #5a8fd4;
+    color: #2d6090;
+  }
+
+  .event-reset::before {
+    color: #1a3850;
   }
 
   /* ── Board ───────────────────────────────────────────────────────────── */
@@ -1015,35 +1136,36 @@
     flex-direction: column;
   }
 
-  /* Era header bar at the top of the board */
   .era-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
-    padding: 8px 14px;
-    border-bottom: 1px solid #2b333d;
+    padding: 7px 14px;
+    border-bottom: 1px solid #182030;
     flex-shrink: 0;
   }
 
   .era-name {
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.22em;
     color: #d6f36a;
   }
 
   .era-sub {
-    font-size: 0.68rem;
-    color: #98a7b8;
-    letter-spacing: 0.08em;
+    font-size: 0.58rem;
+    color: #4e7090;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
   .era-round {
-    font-size: 0.68rem;
-    color: #98a7b8;
+    font-size: 0.6rem;
+    color: #4e7090;
     margin-left: auto;
-    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.08em;
   }
 
   .map {
@@ -1051,9 +1173,11 @@
     width: 100%;
     flex: 1;
     min-height: 680px;
-    background:
-      radial-gradient(circle at top left, rgba(214, 243, 106, 0.06), transparent 35%),
-      linear-gradient(180deg, #1c242d 0%, #0d1116 100%);
+    background-color: #070a10;
+    background-image:
+      linear-gradient(rgba(180, 210, 240, 0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(180, 210, 240, 0.022) 1px, transparent 1px);
+    background-size: 46px 46px;
   }
 
   /* Adjacency lines SVG overlay */
@@ -1067,137 +1191,178 @@
   }
 
   .map-edges line {
-    stroke: rgba(255, 255, 255, 0.07);
-    stroke-width: 0.5;
+    stroke: rgba(180, 210, 240, 0.065);
+    stroke-width: 0.55;
   }
 
   /* Region labels */
   .region-label {
     position: absolute;
-    font-size: 0.55rem;
+    font-size: 0.52rem;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: rgba(152, 167, 184, 0.3);
+    letter-spacing: 0.18em;
+    color: rgba(90, 135, 165, 0.6);
     pointer-events: none;
     writing-mode: vertical-lr;
     transform: rotate(180deg);
     user-select: none;
+    font-family: ui-monospace, monospace;
   }
 
   /* Territory status dots */
   .status-dot {
     position: absolute;
     top: 5px;
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
   }
 
   .at-risk-dot {
-    right: 5px;
+    right: 6px;
     background: #ff7d4d;
   }
 
   .contested-dot {
     right: 14px;
-    background: #ffd04d;
+    background: #d4a020;
   }
 
   /* Territory tag row */
   .territory-tags {
     display: flex;
-    gap: 4px;
+    gap: 3px;
     flex-wrap: wrap;
   }
 
   .tag {
-    font-size: 0.56rem;
-    letter-spacing: 0.08em;
+    font-size: 0.5rem;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    padding: 1px 4px;
-    border-radius: 3px;
+    padding: 1px 3px;
+    border-radius: 2px;
   }
 
   .tag-choke {
-    color: rgba(214, 243, 106, 0.5);
-    border: 1px solid rgba(214, 243, 106, 0.15);
+    color: rgba(214, 243, 106, 0.32);
+    border: 1px solid rgba(214, 243, 106, 0.1);
   }
 
-  /* Your assigned target territory */
   .my-target {
-    outline: 2px dashed #d6f36a;
+    outline: 2px dashed #d6f36a88;
+    outline-offset: 1px;
   }
 
-  /* Opponent's target (territory they need to capture) */
   .opponent-target {
-    outline: 2px dashed #ff7d4d44;
+    outline: 2px dashed rgba(255, 125, 77, 0.22);
+    outline-offset: 1px;
   }
 
   .tag-target {
     color: #d6f36a;
-    border: 1px solid #d6f36a44;
+    border: 1px solid #d6f36a33;
   }
 
-  /* Bastion fortified territory */
   .fortified {
-    box-shadow: inset 0 0 0 2px rgba(90, 143, 212, 0.5);
+    box-shadow: inset 0 0 0 2px rgba(80, 130, 200, 0.32);
   }
 
   .tag-fortified {
     color: #5a8fd4;
-    border: 1px solid #5a8fd444;
+    border: 1px solid #5a8fd433;
   }
+
+  /* ── Territory cards ─────────────────────────────────────────────────── */
 
   .territory {
     position: absolute;
-    width: 160px;
-    min-height: 72px;
+    width: 148px;
+    min-height: 66px;
     display: grid;
-    gap: 4px;
+    gap: 2px;
     align-content: center;
     justify-items: start;
     transform: translate(-50%, -50%);
-    background: #232c35;
-    color: #f4f7fb;
+    background: #16243a;
+    color: #b4c8d8;
     text-align: left;
-    padding: 10px 12px;
-    transition: outline 80ms;
+    padding: 8px 10px 8px 14px;
+    transition: outline 60ms;
+    border: 1px solid #243550;
+    border-radius: 2px;
+    cursor: pointer;
   }
 
-  .choke-point {
-    border-color: rgba(214, 243, 106, 0.2);
-  }
-
-  .territory-label {
-    font-size: 0.78rem;
-    color: #98a7b8;
-    line-height: 1.2;
-  }
-
-  .territory-units {
-    font-size: 1.1rem;
+  /* Left ownership strip */
+  .territory::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 2px 0 0 2px;
+    background: #2a3e58;
+    transition: background 100ms;
   }
 
   .owned-by-player1 {
-    background: #1e3d5c;
+    background: #142440;
+    border-color: #204060;
+  }
+
+  .owned-by-player1::before {
+    background: #2d6ea8;
   }
 
   .owned-by-player2 {
-    background: #5c2a1e;
+    background: #2c1210;
+    border-color: #4e2018;
+  }
+
+  .owned-by-player2::before {
+    background: #a8382a;
+  }
+
+  .territory-label {
+    font-size: 0.68rem;
+    color: #5a80a0;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+  }
+
+  .owned-by-player1 .territory-label {
+    color: #4a80b8;
+  }
+
+  .owned-by-player2 .territory-label {
+    color: #a85050;
+  }
+
+  .territory-units {
+    font-size: 1.25rem;
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+    font-weight: 700;
+    color: #c8dce8;
+    line-height: 1;
+  }
+
+  .choke-point {
+    border-color: rgba(214, 243, 106, 0.18);
   }
 
   .selected-territory {
     outline: 2px solid #d6f36a;
+    outline-offset: 1px;
   }
 
-  /* Territories you can click this turn */
   .selectable {
-    outline: 1px solid #d6f36a55;
+    outline: 1px solid #d6f36a50;
   }
 
-  /* Adjacent enemy territories you can attack from the selected territory */
   .attackable {
     outline: 2px solid #ff7d4d;
+    outline-offset: 1px;
   }
 
   @media (max-width: 960px) {
@@ -1205,18 +1370,14 @@
       grid-template-columns: 1fr;
     }
 
-    .board {
-      min-height: 480px;
-    }
-
+    .board,
     .map {
       min-height: 480px;
     }
 
     .territory {
-      width: 120px;
-      min-height: 58px;
-      font-size: 0.85rem;
+      width: 118px;
+      min-height: 56px;
     }
   }
 </style>
