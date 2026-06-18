@@ -215,7 +215,7 @@ function emitSnapshot(roomCode: string) {
       isSpectator: false,
       spectatorCount: specCount
     };
-    io.to(player.socketId).emit('server:message', {
+    io.sockets.sockets.get(player.socketId)?.emit('server:message', {
       type: 'room:update',
       payload: snapshot
     });
@@ -223,15 +223,15 @@ function emitSnapshot(roomCode: string) {
 
   const spectators = roomSpectators.get(roomCode);
   if (spectators) {
-    for (const socketId of spectators) {
+    for (const specSocketId of spectators) {
       const snapshot: RoomSnapshot = {
         state,
-        viewerSocketId: socketId,
+        viewerSocketId: specSocketId,
         viewerToken: null,
         isSpectator: true,
         spectatorCount: specCount
       };
-      io.to(socketId).emit('server:message', {
+      io.sockets.sockets.get(specSocketId)?.emit('server:message', {
         type: 'room:update',
         payload: snapshot
       });

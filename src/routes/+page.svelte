@@ -201,9 +201,6 @@
         </div>
       {/if}
 
-      {#if isSpectator}
-        <p class="spectator-notice">Watching — this room is full</p>
-      {/if}
 
       {#if errorMessage}
         <p class="error">{errorMessage}</p>
@@ -212,6 +209,10 @@
 
     {#if state}
       <div class="panel stack">
+        {#if isSpectator}
+          <p class="spectator-notice">Observing — actions disabled</p>
+        {/if}
+
         <div class="turn-header">
           {#if state.phase === 'active'}
             {#if isMyTurn}
@@ -685,11 +686,14 @@
   /* ── Spectator ───────────────────────────────────────────────────────── */
 
   .spectator-notice {
-    font-size: 0.82rem;
+    font-size: 0.75rem;
     color: #98a7b8;
+    background: #1b2128;
     border: 1px solid #2b333d;
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 5px 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 
   .spectator-badge {
