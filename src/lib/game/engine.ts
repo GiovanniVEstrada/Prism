@@ -1,13 +1,15 @@
-import { STONE_AGE_MAP, STONE_AGE_TERRITORIES, isAdjacent } from './map';
+import { getMapConfig } from './map';
 import type {
   AttackResult,
+  EraId,
   FactionId,
   GameEvent,
   GameState,
   PlayerId,
   PlayerState,
   TerritoryId,
-  TerritoryState
+  TerritoryState,
+  TierSize
 } from './types';
 
 const DEFAULT_ROUND_CAP = 12;
@@ -46,11 +48,11 @@ export const FACTIONS: Record<
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function createTerritories(): Record<TerritoryId, TerritoryState> {
-  return STONE_AGE_TERRITORIES.reduce(
-    (territories, id) => {
-      territories[id] = { id, ownerId: null, units: 0 };
-      return territories;
+function createTerritories(era: EraId, tier: TierSize): Record<TerritoryId, TerritoryState> {
+  return getMapConfig(era, tier).territories.reduce(
+    (acc, t) => {
+      acc[t.id] = { id: t.id, ownerId: null, units: 0 };
+      return acc;
     },
     {} as Record<TerritoryId, TerritoryState>
   );
@@ -109,7 +111,13 @@ export function nextPlayerId(playerId: PlayerId): PlayerId {
 
 // ── Room lifecycle ────────────────────────────────────────────────────────────
 
-export function createRoom(roomCode: string, host: PlayerState): GameState {
+export function createRoom(
+  roomCode: string,
+  host: PlayerState,
+  era: EraId = 'stone-age',
+  tier: TierSize = 'small'
+): GameState {
+  const { chokePoints } = getMapConfig(era, tier);
   return {
     roomCode,
     hostSocketId: host.socketId,
@@ -117,7 +125,7 @@ export function createRoom(roomCode: string, host: PlayerState): GameState {
     currentTurn: null,
     winnerId: null,
     players: [host],
-    territories: createTerritories(),
+    territories: createTerritories(era, tier),
     draftTurn: null,
     reinforcementsRemaining: 0,
     lastAttack: null,
@@ -125,6 +133,9 @@ export function createRoom(roomCode: string, host: PlayerState): GameState {
     events: [],
     round: 0,
     roundCap: DEFAULT_ROUND_CAP,
+    era,
+    tier,
+    chokePoints,
     factions: { player1: null, player2: null },
     targetTerritories: { player1: null, player2: null },
     factionCooldowns: { player1: 0, player2: 0 },
@@ -191,7 +202,7 @@ export function claimTerritory(state: GameState, actorId: PlayerId, territoryId:
   };
 
   const claimedCount = Object.values(nextTerritories).filter((t) => t.ownerId).length;
-  const allClaimed = claimedCount === STONE_AGE_TERRITORIES.length;
+  const allClaimed = claimedCount === Object.keys(state.territories).length;
   const event: GameEvent = { type: 'claim', playerId: actorId, territoryId };
 
   return {
@@ -228,8 +239,9 @@ export function startGame(
   }
 
   // Assign target territories: each player must capture one of the opponent's current territories.
-  const p1Owned = STONE_AGE_TERRITORIES.filter((id) => state.territories[id].ownerId === 'player1');
-  const p2Owned = STONE_AGE_TERRITORIES.filter((id) => state.territories[id].ownerId === 'player2');
+  const allIds = Object.keys(state.territories);
+  const p1Owned = allIds.filter((id) => state.territories[id].ownerId === 'player1');
+  const p2Owned = allIds.filter((id) => state.territories[id].ownerId === 'player2');
   const targetTerritories = {
     player1: p2Owned[Math.floor(rng() * p2Owned.length)],
     player2: p1Owned[Math.floor(rng() * p1Owned.length)]
@@ -275,7 +287,7 @@ export function resetGame(state: GameState, actorSocketId: string): GameState {
     phase: 'draft',
     currentTurn: null,
     winnerId: null,
-    territories: createTerritories(),
+    territories: createTerritories(state.era, state.tier),
     draftTurn: state.players[0].id,
     reinforcementsRemaining: 0,
     round: 0,
@@ -380,7 +392,8 @@ export function attack(
     throw new Error('You must attack an enemy territory.');
   }
 
-  if (!isAdjacent(from, to)) {
+  const fromDef = getMapConfig(state.era, state.tier).territories.find((t) => t.id === from);
+  if (!fromDef?.adjacent.includes(to)) {
     throw new Error('Territories are not adjacent.');
   }
 
@@ -515,6 +528,6 @@ export function roomReady(state: GameState): boolean {
   return state.players.length === 2;
 }
 
-export function territoryLabel(territoryId: TerritoryId): string {
-  return STONE_AGE_MAP.find((territory) => territory.id === territoryId)?.label ?? territoryId;
+export function territoryLabel(state: GameState, territoryId: TerritoryId): string {
+  return getMapConfig(state.era, state.tier).territories.find((t) => t.id === territoryId)?.label ?? territoryId;
 }

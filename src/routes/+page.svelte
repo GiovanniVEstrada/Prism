@@ -1,30 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { connectSocket, emitAction } from '$lib/client/socket';
-  import { STONE_AGE_MAP } from '$lib/game/map';
+  import { getMapConfig } from '$lib/game/map';
   import { isDraftComplete, dominanceScore, FACTIONS } from '$lib/game/engine';
   import { playTurnStart, playConquest, playTerritoryLost, playWin, playLoss } from '$lib/client/audio';
-  import type { FactionId, GameEvent, GameState, PlayerId, TerritoryId } from '$lib/game/types';
+  import type { EraId, FactionId, GameEvent, GameState, PlayerId, TerritoryId, TierSize } from '$lib/game/types';
 
-  // Precomputed adjacency edge list for the SVG overlay (unique pairs only).
-  const MAP_EDGES = (() => {
-    const seen = new Set<string>();
-    const edges: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
-    for (const t of STONE_AGE_MAP) {
-      for (const adjId of t.adjacent) {
-        const key = [t.id, adjId].sort().join('--');
-        if (!seen.has(key)) {
-          seen.add(key);
-          const adj = STONE_AGE_MAP.find((m) => m.id === adjId)!;
-          edges.push({ x1: t.x, y1: t.y, x2: adj.x, y2: adj.y });
-        }
-      }
-    }
-    return edges;
-  })();
-
-  const CHOKE_POINTS = new Set<TerritoryId>(['bone-ridge', 'great-rift']);
-
+  let selectedEra: EraId = 'stone-age';
+  let selectedTier: TierSize = 'small';
   let selectedRoundCap = 12;
   let botDifficulty: 'passive' | 'aggressive' = 'passive';
 
@@ -37,6 +20,25 @@
   let isSpectator = false;
   let spectatorCount = 0;
   let state: GameState | null = null;
+
+  $: currentMap = getMapConfig(state?.era ?? selectedEra, state?.tier ?? selectedTier);
+  $: currentMapTerritories = currentMap.territories;
+  $: mapEdges = (() => {
+    const seen = new Set<string>();
+    const edges: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+    for (const t of currentMapTerritories) {
+      for (const adjId of t.adjacent) {
+        const key = [t.id, adjId].sort().join('--');
+        if (!seen.has(key)) {
+          seen.add(key);
+          const adj = currentMapTerritories.find((m) => m.id === adjId)!;
+          edges.push({ x1: t.x, y1: t.y, x2: adj.x, y2: adj.y });
+        }
+      }
+    }
+    return edges;
+  })();
+  $: chokePointsSet = new Set<TerritoryId>(state?.chokePoints ?? []);
 
   $: me = state?.players.find((p) => p.socketId === viewerSocketId) ?? null;
   $: myPlayerId = (me?.id ?? null) as PlayerId | null;
@@ -60,7 +62,7 @@
   // Enemy territories adjacent to the selected territory — click to attack.
   $: attackableIds =
     isMyTurn && state?.selectedTerritoryId
-      ? (STONE_AGE_MAP.find((t) => t.id === state!.selectedTerritoryId)?.adjacent ?? []).filter(
+      ? (currentMapTerritories.find((t) => t.id === state!.selectedTerritoryId)?.adjacent ?? []).filter(
           (id) => state!.territories[id].ownerId !== myPlayerId && state!.territories[id].ownerId !== null
         )
       : [];
@@ -89,7 +91,7 @@
       ? (Object.values(state.territories)
           .filter((t) => {
             if (t.ownerId !== myPlayerId) return false;
-            const def = STONE_AGE_MAP.find((m) => m.id === t.id);
+            const def = currentMapTerritories.find((m) => m.id === t.id);
             return (
               def?.adjacent.some(
                 (adjId) =>
@@ -142,7 +144,7 @@
   }
 
   function territoryName(id: TerritoryId): string {
-    return STONE_AGE_MAP.find((t) => t.id === id)?.label ?? id;
+    return currentMapTerritories.find((t) => t.id === id)?.label ?? id;
   }
 
   function formatEvent(event: GameEvent): string {
@@ -212,7 +214,7 @@
   });
 
   function handleCreateRoom() {
-    emitAction({ type: 'create-room', playerName: playerName || 'Player 1' });
+    emitAction({ type: 'create-room', playerName: playerName || 'Player 1', era: selectedEra, tier: selectedTier });
   }
 
   function handleJoinRoom() {
@@ -275,6 +277,35 @@
         <span>Name</span>
         <input bind:value={playerName} maxlength="18" placeholder="Player name" />
       </label>
+
+      {#if !state}
+        <div class="map-selector">
+          <span class="muted small">Era</span>
+          <div class="round-cap-options">
+            <label class="cap-option" class:cap-selected={selectedEra === 'stone-age'}>
+              <input type="radio" bind:group={selectedEra} value="stone-age" />
+              Stone Age
+            </label>
+            <label class="cap-option cap-disabled" title="Coming soon">Bronze Age</label>
+            <label class="cap-option cap-disabled" title="Coming soon">Medieval</label>
+          </div>
+          <span class="muted small">Tier</span>
+          <div class="round-cap-options">
+            <label class="cap-option" class:cap-selected={selectedTier === 'small'}>
+              <input type="radio" bind:group={selectedTier} value="small" />
+              Small
+            </label>
+            <label class="cap-option" class:cap-selected={selectedTier === 'medium'}>
+              <input type="radio" bind:group={selectedTier} value="medium" />
+              Medium
+            </label>
+            <label class="cap-option" class:cap-selected={selectedTier === 'large'}>
+              <input type="radio" bind:group={selectedTier} value="large" />
+              Large
+            </label>
+          </div>
+        </div>
+      {/if}
 
       <div class="inline">
         <button type="button" on:click={handleCreateRoom} disabled={!connected}>Create room</button>
@@ -349,7 +380,7 @@
         {/if}
 
         {#if state.phase === 'draft'}
-          <p class="muted small">Draft: {Object.values(state.territories).filter((t) => t.ownerId).length}/{STONE_AGE_MAP.length} claimed</p>
+          <p class="muted small">Draft: {Object.values(state.territories).filter((t) => t.ownerId).length}/{currentMapTerritories.length} claimed</p>
 
           {#if !myFactionSelected && myPlayerId && !isSpectator}
             <div class="faction-picker">
@@ -536,7 +567,7 @@
 
   <section class="board panel">
     <div class="era-header">
-      <span class="era-name">Stone Age</span>
+      <span class="era-name">{currentMap.label}</span>
       <span class="era-sub">Dominion Protocol</span>
       {#if state?.phase === 'active'}
         <span class="era-round">Round {Math.min(state.round, state.roundCap)} / {state.roundCap}</span>
@@ -550,23 +581,23 @@
     <div class="map">
       <!-- Adjacency lines -->
       <svg class="map-edges" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {#each MAP_EDGES as edge}
+        {#each mapEdges as edge}
           <line x1="{edge.x1}" y1="{edge.y1}" x2="{edge.x2}" y2="{edge.y2}" />
         {/each}
       </svg>
 
       <!-- Region labels -->
-      <span class="region-label" style="left:1%;top:2%">North</span>
-      <span class="region-label" style="left:1%;top:33%">Central</span>
-      <span class="region-label" style="left:1%;top:58%">South</span>
+      {#each currentMap.regionLabels as rl}
+        <span class="region-label" style="left:{rl.x}%;top:{rl.y}%">{rl.label}</span>
+      {/each}
 
-      {#each STONE_AGE_MAP as territory}
+      {#each currentMapTerritories as territory}
         {@const ts = state?.territories[territory.id]}
         {@const isSelectable = selectableIds.includes(territory.id)}
         {@const isAttackable = attackableIds.includes(territory.id)}
         {@const isAtRisk = atRiskIds.includes(territory.id)}
         {@const isContested = contestedIds.includes(territory.id)}
-        {@const isChoke = CHOKE_POINTS.has(territory.id)}
+        {@const isChoke = chokePointsSet.has(territory.id)}
         {@const isMyTarget = myTarget === territory.id}
         {@const isOpponentTarget = opponentTarget === territory.id}
         {@const isFortified = state?.fortifiedTerritoryId === territory.id}
@@ -960,6 +991,17 @@
     border-color: #d6f36a55;
     color: #d6f36a;
     background: #0b1008;
+  }
+
+  .cap-disabled {
+    opacity: 0.28;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .map-selector {
+    display: grid;
+    gap: 4px;
   }
 
   /* ── Player stats ────────────────────────────────────────────────────── */

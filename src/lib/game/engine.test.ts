@@ -25,7 +25,7 @@ const guest: PlayerState = { id: 'player2', socketId: 'socket-b', name: 'Guest' 
 const fixedRng = () => 0;
 
 function createStartedGame() {
-  let state = createRoom('PRISM', host);
+  let state = createRoom('PRISM', host, 'stone-age', 'small');
   state = joinRoom(state, guest);
   state = selectFaction(state, 'player1', 'merchant');
   state = selectFaction(state, 'player2', 'warband');
@@ -88,7 +88,7 @@ describe('game engine', () => {
   });
 
   it('does not allow the game to start before the draft is complete', () => {
-    let state = createRoom('PRISM', host);
+    let state = createRoom('PRISM', host, 'stone-age', 'small');
     state = joinRoom(state, guest);
     state = selectFaction(state, 'player1', 'merchant');
     state = selectFaction(state, 'player2', 'warband');
@@ -98,7 +98,7 @@ describe('game engine', () => {
   });
 
   it('tracks draft completion', () => {
-    let state = createRoom('PRISM', host);
+    let state = createRoom('PRISM', host, 'stone-age', 'small');
     state = joinRoom(state, guest);
 
     expect(isDraftComplete(state)).toBe(false);
@@ -122,7 +122,7 @@ describe('game engine', () => {
   });
 
   it('prevents selecting territories outside the active phase', () => {
-    let state = createRoom('PRISM', host);
+    let state = createRoom('PRISM', host, 'stone-age', 'small');
     state = joinRoom(state, guest);
 
     expect(() => selectTerritory(state, 'player1', 'frost-peaks')).toThrow(
@@ -150,14 +150,14 @@ describe('game engine', () => {
   });
 
   it('rejects joining a full room', () => {
-    let state = createRoom('PRISM', host);
+    let state = createRoom('PRISM', host, 'stone-age', 'small');
     state = joinRoom(state, guest);
     const overflow: PlayerState = { id: 'player2', socketId: 'socket-c', name: 'Third' };
     expect(() => joinRoom(state, overflow)).toThrow('Room is full.');
   });
 
   it('rejects claiming a territory out of draft turn', () => {
-    let state = createRoom('PRISM', host);
+    let state = createRoom('PRISM', host, 'stone-age', 'small');
     state = joinRoom(state, guest);
     expect(() => claimTerritory(state, 'player2', 'frost-peaks')).toThrow('It is not your draft turn.');
   });

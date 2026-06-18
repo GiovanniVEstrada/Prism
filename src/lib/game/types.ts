@@ -6,19 +6,11 @@ export type FactionId = 'warband' | 'bastion' | 'merchant';
 
 export type Phase = 'lobby' | 'draft' | 'active' | 'finished';
 
-export type TerritoryId =
-  | 'frost-peaks'
-  | 'wolf-den'
-  | 'thunder-mesa'
-  | 'ochre-bluffs'
-  | 'bone-ridge'
-  | 'great-rift'
-  | 'red-gorge'
-  | 'ash-marsh'
-  | 'river-delta'
-  | 'ember-steppe'
-  | 'amber-plains'
-  | 'salt-flat';
+export type TerritoryId = string;
+
+export type EraId = 'stone-age';
+
+export type TierSize = 'small' | 'medium' | 'large';
 
 export interface TerritoryState {
   id: TerritoryId;
@@ -77,6 +69,10 @@ export interface GameState {
   events: GameEvent[];
   round: number;
   roundCap: number;
+  // Map
+  era: EraId;
+  tier: TierSize;
+  chokePoints: TerritoryId[];
   // Faction system
   factions: Record<PlayerId, FactionId | null>;
   targetTerritories: Record<PlayerId, TerritoryId | null>;
@@ -93,7 +89,7 @@ export interface RoomSnapshot {
 }
 
 export type ClientEvent =
-  | { type: 'create-room'; playerName: string }
+  | { type: 'create-room'; playerName: string; era: EraId; tier: TierSize }
   | { type: 'join-room'; roomCode: string; playerName: string; token?: string }
   | { type: 'add-bot'; difficulty: BotDifficulty }
   | { type: 'select-faction'; factionId: FactionId }

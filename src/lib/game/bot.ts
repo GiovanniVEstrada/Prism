@@ -1,5 +1,5 @@
 import type { BotDifficulty, ClientEvent, FactionId, GameState, PlayerId, TerritoryId } from './types';
-import { STONE_AGE_MAP } from './map';
+import { getMapConfig } from './map';
 
 export type { BotDifficulty };
 
@@ -11,6 +11,7 @@ export function botPickAction(
   difficulty: BotDifficulty
 ): ClientEvent | null {
   const opponentId: PlayerId = botId === 'player1' ? 'player2' : 'player1';
+  const mapTerritories = getMapConfig(state.era, state.tier).territories;
 
   // Faction selection — always first move in draft
   if (state.phase === 'draft' && !state.factions[botId]) {
@@ -35,7 +36,7 @@ export function botPickAction(
           .map((t) => t.id)
       );
       const contested = unclaimed.filter((id) => {
-        const def = STONE_AGE_MAP.find((t) => t.id === id)!;
+        const def = mapTerritories.find((t) => t.id === id)!;
         return def.adjacent.some((adjId) => opponentOwned.has(adjId));
       });
       const pool = contested.length > 0 ? contested : unclaimed;
@@ -57,7 +58,7 @@ export function botPickAction(
       if (botTerritories.length === 0) return { type: 'end-turn' };
 
       const frontline = botTerritories.filter((t) => {
-        const def = STONE_AGE_MAP.find((m) => m.id === t.id)!;
+        const def = mapTerritories.find((m) => m.id === t.id)!;
         return def.adjacent.some((adjId) => state.territories[adjId].ownerId === opponentId);
       });
 
@@ -79,7 +80,7 @@ export function botPickAction(
       .sort((a, b) => b.units - a.units); // strongest attacker first
 
     for (const attacker of attackers) {
-      const def = STONE_AGE_MAP.find((m) => m.id === attacker.id)!;
+      const def = mapTerritories.find((m) => m.id === attacker.id)!;
       const targets = def.adjacent
         .filter((adjId) => state.territories[adjId].ownerId === opponentId)
         .sort((a, b) => state.territories[a].units - state.territories[b].units); // weakest defender first

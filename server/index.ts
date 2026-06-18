@@ -300,7 +300,7 @@ function applyAction(socketId: string, action: ClientEvent) {
         socketId,
         name: action.playerName.trim() || 'Player 1'
       };
-      const state = createRoom(roomCode, host);
+      const state = createRoom(roomCode, host, action.era, action.tier);
       roomStates.set(roomCode, state);
       socketToRoom.set(socketId, roomCode);
       io.sockets.sockets.get(socketId)?.join(roomCode);
